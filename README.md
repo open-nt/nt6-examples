@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/banner.png" alt="Nt 6 Examples: C++ examples for a small Qt 6 compatible API" width="720">
+  <img src="widgets/nt-logo.svg" alt="Nt logo" width="128" height="128">
 </p>
 
 # nt6-examples
