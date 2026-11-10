@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/">
+        <file>nt-logo.svg</file>
+    </qresource>
+</RCC>
