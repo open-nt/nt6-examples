@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="widgets/nt-logo.svg" alt="Nt logo" width="128" height="128">
+  <img src="docs/banner.png" alt="Nt 6 Examples: C++ examples for a small Qt 6 compatible API" width="720">
 </p>
 
 # nt6-examples
@@ -9,8 +9,9 @@
 [Snap package](https://snapcraft.io/open-nt6) ·
 [MIT License](LICENSE)
 
-Example applications for Nt 6, a small MIT-licensed implementation of a subset of the Qt 6 API.
-The sources are the ones in the `examples/` directory of Nt, set up to build against an installed Nt.
+C++ example applications for Nt 6, a small MIT-licensed, Qt 6 compatible implementation of a subset of the
+Qt 6 API: widgets, signals and slots, `moc`, SVG, WebSockets, an HTTP server, D-Bus and serial port.
+The sources are the ones in the `examples/` directory of Nt, set up to build with CMake against an installed Nt.
 
 ## Building
 
