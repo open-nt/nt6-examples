@@ -48,6 +48,11 @@ add_test(NAME tst_counter COMMAND tst_counter)
 add_executable(hello_window gui/hello_window.cpp)
 target_link_libraries(hello_window PRIVATE Nt6::Gui)
 
+# A QPainter benchmark (ruler, circles, bezier graphs, bars, icons & text) that prints frame rates; the raster
+# and the OpenGL paint engine can be switched between at run time.
+add_executable(painter_bench gui/painter_bench.cpp)
+target_link_libraries(painter_bench PRIVATE Nt6::Gui Nt6::OpenGL)
+
 # Shows an SVG file in a window, or converts what it draws; see "Using Nt SVG" in the documentation.
 add_executable(svg_viewer svg/svg_viewer.cpp)
 target_link_libraries(svg_viewer PRIVATE Nt6::SvgWidgets)
