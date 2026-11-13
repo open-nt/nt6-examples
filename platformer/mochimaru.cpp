@@ -794,8 +794,7 @@ void pixelText(QPainter &p, const QString &str, int x, int y, int scale, const Q
 // Bubble letters for the title. Each 5x7 glyph becomes a skeleton, lit cells joined to their neighbors, that is
 // drawn several times, fatter or thinner: a dark outline, a shaded body, the body itself and a highlight, so the
 // letters come out puffy and round. Drawn on the window, not the canvas, so the curves are smooth. The fat strokes
-// are filled shapes (a circle on every cell, a bar along every join) rather than wide pens, because Nt6 draws wide
-// pens too wide on a HiDPI screen.
+// are filled shapes: a circle on every cell and a bar along every join.
 struct Bubble {
     QList<QLineF> lines;  // joins between cells, in cells
     QList<QPointF> cells; // the centers of all lit cells
@@ -954,7 +953,8 @@ public:
     explicit Game(const Options &opt) : m_opt(opt), m_audio(opt.sound, opt.offline) {
         setTitle("Mochimaru no Daibouken");
         QSurfaceFormat format;
-        format.setSamples(4); // smooths the title's curves on the GPU
+        format.setSamples(4);     // smooths the title's curves on the GPU
+        format.setSwapInterval(1); // one frame per refresh of the display
         setFormat(format);
         resize(VW * 3, VH * 3);
         m_canvas = QImage(VW, VH, QImage::Format_RGB32);
@@ -988,8 +988,12 @@ public:
         if (opt.level >= 0)
             newGame(opt.level);
 
+        // The next frame starts once the last one is on the screen, after a short timer, so frames come at the
+        // display's refresh rate and the event loop sleeps in between.
+        QObject::connect(this, &QOpenGLWindow::frameSwapped, this, [this] { m_timer.start(); });
         QObject::connect(&m_timer, &QTimer::timeout, this, [this] { onTimer(); });
-        m_timer.setInterval(8);
+        m_timer.setSingleShot(true);
+        m_timer.setInterval(1);
         m_clock.start();
         m_last = m_clock.nsecsElapsed();
     }
@@ -1803,18 +1807,27 @@ private:
         blit(p, s, cx - float(s.img.width()) / 2, bottom - float(s.img.height()) + float(s.pad));
     }
 
+    // Draws a frame, into the window or an image (--shot, --record): the canvas scaled up, and the title over it.
     void render(QPainter &out, const QSize &size) {
+        drawCanvas(size);
+        out.fillRect(0, 0, size.width(), size.height(), QColor("#4a3040"));
+        out.drawImage(QRectF(m_ox, m_oy, VW * m_scale, VH * m_scale), m_canvas);
+        drawHiRes(out);
+    }
+
+    // Draws the game into the 320x192 canvas, and works out where it goes in a window of `size`.
+    void drawCanvas(const QSize &size) {
         m_scale = std::min(double(size.width()) / VW, double(size.height()) / VH);
         m_ox = (size.width() - VW * m_scale) / 2;
         m_oy = (size.height() - VH * m_scale) / 2;
-        out.fillRect(0, 0, size.width(), size.height(), QColor("#4a3040"));
-        {
-            QPainter p(&m_canvas);
-            drawWorld(p);
-            drawOverlay(p);
-        }
-        out.drawImage(QRectF(m_ox, m_oy, VW * m_scale, VH * m_scale), m_canvas);
-        // The title is drawn at window resolution: bubble letters, and kana from a system font.
+        QPainter p(&m_canvas);
+        drawWorld(p);
+        drawOverlay(p);
+    }
+
+    // What is drawn at window resolution, over the canvas.
+    void drawHiRes(QPainter &out) {
+        // The title: bubble letters, and kana from a system font.
         if (m_state == State::Title) {
             static const QColor pastel[] = {QColor("#ff8fb8"), QColor("#ffa877"), QColor("#ffd84a"),
                                             QColor("#7fe0b0"), QColor("#74cdf2"), QColor("#b9a0ff")};
