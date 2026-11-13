@@ -51,8 +51,29 @@ elsewhere, pass `-DCMAKE_PREFIX_PATH=<prefix>`.
 | `websockets/` | `websocket_echo`                             | A WebSocket echo server and client                            |
 | `httpserver/` | `hello_server`                               | A small web service                                           |
 | `dbus/`       | `dbus_clock`                                 | A clock on the D-Bus session bus                              |
+| `platformer/` | `mochimaru`, `sprite_sheet`                  | A platform game: Nt Gamepad, Nt FM sound and a MIDI soundtrack |
 
 Without a display, run the graphical examples with `-platform offscreen`.
+
+## Mochimaru no Daibouken
+
+`platformer/` is a small, cute platform game. Run `build/mochimaru`, or `build/mochimaru song.mid` (several
+files, or a directory of them, work too) to play with your own MIDI soundtrack. The sound effects and the
+soundtrack come from the FM synthesizer of Nt FM; the controls come from Nt Gamepad.
+
+| Action        | Gamepad                | Keyboard          |
+|---------------|------------------------|-------------------|
+| Move          | D-pad or left stick    | Arrows or WASD    |
+| Jump          | A                      | Space, Z or Up    |
+| Run           | X or B                 | X or Shift        |
+| Pause / start | Start                  | Esc or Enter      |
+| Music on/off  | Select                 | M                 |
+| Next song     | Y                      | N                 |
+| Fullscreen    |                        | Alt+Enter or F11  |
+| Quit          |                        | Q on the pause screen |
+
+The pixel art is text, in `platformer/sprites.h`; `sprite_sheet` draws all of it on one sheet for review.
+`mochimaru --export-song tune.mid` writes the built-in tune, as a starting point for your own.
 
 ## Comparing with Qt 6
 

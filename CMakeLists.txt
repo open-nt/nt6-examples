@@ -53,6 +53,14 @@ target_link_libraries(hello_window PRIVATE Nt6::Gui)
 add_executable(painter_bench gui/painter_bench.cpp)
 target_link_libraries(painter_bench PRIVATE Nt6::Gui Nt6::OpenGL)
 
+# The pixel art of the platform game, drawn on one sheet for review.
+add_executable(sprite_sheet platformer/sprite_sheet.cpp platformer/sprites.h)
+target_link_libraries(sprite_sheet PRIVATE Nt6::Gui)
+
+# A platform game: Nt Gamepad for the controls, Nt FM for the sound effects and for the MIDI soundtrack.
+add_executable(mochimaru platformer/mochimaru.cpp platformer/sprites.h)
+target_link_libraries(mochimaru PRIVATE Nt6::Gui Nt6::OpenGL Nt6::Gamepad Nt6::FM xcb)
+
 # Shows an SVG file in a window, or converts what it draws; see "Using Nt SVG" in the documentation.
 add_executable(svg_viewer svg/svg_viewer.cpp)
 target_link_libraries(svg_viewer PRIVATE Nt6::SvgWidgets)
