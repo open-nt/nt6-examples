@@ -51,7 +51,7 @@ elsewhere, pass `-DCMAKE_PREFIX_PATH=<prefix>`.
 | `websockets/` | `websocket_echo`                             | A WebSocket echo server and client                            |
 | `httpserver/` | `hello_server`                               | A small web service                                           |
 | `dbus/`       | `dbus_clock`                                 | A clock on the D-Bus session bus                              |
-| `platformer/` | `mochimaru`, `sprite_sheet`                  | A platform game: Nt Gamepad, Nt FM sound and a MIDI soundtrack |
+| `platformer/` | `mochimaru`, `sprite_sheet`                  | A platform game: Nt Gamepad, Nt FM sound, a MIDI soundtrack and an OpenGL window |
 
 Without a display, run the graphical examples with `-platform offscreen`.
 

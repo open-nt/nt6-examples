@@ -30,12 +30,10 @@
 #include <memory>
 #include <set>
 #include <string_view>
-#include <tuple>
 
 #include <xcb/xcb.h>
 
 namespace {
-int g_paints = 0; qint64 g_paintNs = 0; qint64 g_t[5] = {}; // TEMP
 
 // Nt's window has no fullscreen call, so ask the window manager the way every X11 client does.
 void xcbFullScreen(quintptr window, bool on) {
@@ -826,110 +824,83 @@ Bubble bubbleOf(const Glyph &g) {
     return b;
 }
 
-// One bubble letter, drawn once into two images: the back (a drop of shadow and the dark outline) and the front
-// (the shaded body, the highlight and a glint). `u` is the size of one cell in image pixels; the letter's cell
-// (0, 0) is at (margin, margin) in the images.
-struct BubbleLetter {
-    QImage back, front;
-    double margin = 0;
-};
-
-BubbleLetter renderBubbleLetter(const Glyph &g, const QColor &base, double u) {
-    static const QColor ink(74, 48, 64);
-    const double fat = u * 2.0; // how wide the skeleton is made
-    const double o = u * 0.6;   // outline thickness
-    BubbleLetter l;
-    l.margin = u * 2.6;
-    const QSize size(int(std::ceil(5 * u + 2 * l.margin)), int(std::ceil(7 * u + 2 * l.margin)));
-    QTransform tr;
-    tr.translate(l.margin, l.margin);
-    tr.scale(u, u);
-    const Bubble b = bubbleOf(g);
-
-    // One layer: the skeleton made `w` wide, moved by (dx, dy) pixels.
-    auto layer = [&](QPainter &p, const QColor &c, double w, double dx, double dy) {
-        const QPointF d(dx, dy);
-        p.setPen(Qt::NoPen);
-        p.setBrush(c);
-        for (const QLineF &line : b.lines) {
-            const QLineF m = tr.map(line);
-            const QPointF p1 = m.p1() + d, p2 = m.p2() + d;
-            const double len = std::hypot(p2.x() - p1.x(), p2.y() - p1.y());
-            const QPointF n(-(p2.y() - p1.y()) / len * w / 2, (p2.x() - p1.x()) / len * w / 2);
-            const QPointF bar[] = {p1 + n, p2 + n, p2 - n, p1 - n};
-            p.drawPolygon(bar, 4);
-        }
-        for (const QPointF &cell : b.cells)
-            p.drawEllipse(tr.map(cell) + d, w / 2, w / 2);
-    };
-    for (QImage *img : {&l.back, &l.front}) {
-        *img = QImage(size, QImage::Format_ARGB32_Premultiplied);
-        img->fill(Qt::transparent);
+// A circle as a polygon, with enough corners to look round at its size.
+void drawDisc(QPainter &p, const QPointF &c, double r) {
+    const int n = std::clamp(int(r * 0.9), 12, 48);
+    QPointF pts[48];
+    for (int i = 0; i < n; ++i) {
+        const double a = i * 6.283185307179586 / n;
+        pts[i] = c + QPointF(std::cos(a) * r, std::sin(a) * r);
     }
-    QPainter bp(&l.back);
-    bp.setRenderHint(QPainter::Antialiasing);
-    layer(bp, ink, fat + 2 * o, u * 0.35, u * 0.85);
-    layer(bp, ink, fat + 2 * o, 0, 0);
-    bp.end();
-    QPainter fp(&l.front);
-    fp.setRenderHint(QPainter::Antialiasing);
-    layer(fp, base.darker(140), fat, 0, 0);
-    layer(fp, base, fat * 0.8, -u * 0.05, -u * 0.2);
-    layer(fp, brighter(base, 70), fat * 0.36, -u * 0.2, -u * 0.42);
-    fp.setBrush(QColor(255, 255, 255, 240));
-    for (int k = 0; k < 35; ++k)
-        if (g.row[k / 5][k % 5] == '#') {
-            fp.drawEllipse(tr.map(QPointF(k % 5 + 0.25, k / 5 + 0.2)), u * 0.32, u * 0.24);
-            break;
-        }
-    fp.end();
-    return l;
+    p.drawPolygon(pts, n);
 }
 
-// `cx` is the center of the text, `top` its top edge and `u` the size of one cell, all in window pixels. The
-// letters are drawn once per size and then only moved, which keeps the title cheap even fullscreen. Every
-// letter's back is drawn before any front, so the outlines merge into one sticker behind the word.
+// `cx` is the center of the text, `top` its top edge and `u` the size of one cell, all in window pixels. Every
+// letter's outline is drawn before any body, so the outlines merge into one sticker behind the word. With `aa`
+// the painter smooths the edges; an OpenGL window leaves that to multisampling, which is far cheaper.
 void bubbleText(QPainter &p, const QString &str, double cx, double top, double u, int tick, int seed,
-                const QColor *colors, int ncolors) {
-    static std::map<std::tuple<char, QRgb, int>, BubbleLetter> cache;
-    const double dpr = p.device() ? std::max(1.0, double(p.device()->devicePixelRatio())) : 1.0;
+                const QColor *colors, int ncolors, bool aa) {
+    static const QColor ink(74, 48, 64);
     const QString s = str.toUpper();
     const double adv = u * 5.5;
     const double width = s.size() * adv - u * 0.5;
-    struct Placed {
-        const BubbleLetter *l;
+    const double fat = u * 2.0; // how wide the skeleton is made
+    const double o = u * 0.6;   // outline thickness
+    struct Letter {
+        const Glyph *g;
+        Bubble b;
         QTransform tr;
+        QColor base;
     };
-    std::vector<Placed> placed;
+    std::vector<Letter> letters;
     for (int i = 0; i < int(s.size()); ++i) {
         const ushort uc = s[i].unicode();
         const Glyph *g = glyphOf(uc < 128 ? char(uc) : '?');
         if (!g)
             continue;
-        const QColor base = colors[(i + seed) % ncolors];
-        const auto key = std::make_tuple(g->c, base.rgba(), int(std::lround(u * dpr * 16)));
-        auto it = cache.find(key);
-        if (it == cache.end()) {
-            if (cache.size() > 96)
-                cache.clear(); // the window changed size often
-            it = cache.emplace(key, renderBubbleLetter(*g, base, u * dpr)).first;
-        }
         const double ph = tick * 0.08 + (i + seed) * 0.8;
         QTransform tr;
         tr.translate(cx - width / 2 + i * adv + u * 2.5, top + u * 3.5 + std::sin(ph) * u * 0.6);
         tr.rotate(std::sin(ph * 0.7 + 1.3) * 3.0 + ((i + seed) % 2 ? 4 : -4));
-        tr.translate(-u * 2.5 - it->second.margin / dpr, -u * 3.5 - it->second.margin / dpr);
-        placed.push_back({&it->second, tr});
+        tr.scale(u, u);
+        tr.translate(-2.5, -3.5);
+        letters.push_back({g, bubbleOf(*g), tr, colors[(i + seed) % ncolors]});
     }
-    p.save();
-    p.setRenderHint(QPainter::SmoothPixmapTransform);
-    const QTransform base = p.transform();
-    for (int layer = 0; layer < 2; ++layer)
-        for (const Placed &pl : placed) {
-            const QImage &img = layer ? pl.l->front : pl.l->back;
-            p.setTransform(pl.tr * base);
-            p.drawImage(QRectF(0, 0, img.width() / dpr, img.height() / dpr), img);
+
+    // One layer of one letter: its skeleton made `w` wide, moved by (dx, dy) window pixels.
+    auto layer = [&](const Letter &l, const QColor &c, double w, double dx, double dy) {
+        const QPointF d(dx, dy);
+        p.setBrush(c);
+        for (const QLineF &line : l.b.lines) {
+            const QLineF m = l.tr.map(line);
+            const QPointF a = m.p1() + d, b = m.p2() + d;
+            const double len = std::hypot(b.x() - a.x(), b.y() - a.y());
+            const QPointF n(-(b.y() - a.y()) / len * w / 2, (b.x() - a.x()) / len * w / 2);
+            const QPointF bar[] = {a + n, b + n, b - n, a - n};
+            p.drawPolygon(bar, 4);
         }
+        for (const QPointF &cell : l.b.cells)
+            drawDisc(p, l.tr.map(cell) + d, w / 2);
+    };
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, aa);
+    p.setPen(Qt::NoPen);
+    for (const Letter &l : letters)
+        layer(l, ink, fat + 2 * o, u * 0.35, u * 0.85); // a drop of shadow
+    for (const Letter &l : letters)
+        layer(l, ink, fat + 2 * o, 0, 0);
+    for (const Letter &l : letters) {
+        layer(l, l.base.darker(140), fat, 0, 0);
+        layer(l, l.base, fat * 0.8, -u * 0.05, -u * 0.2);
+        layer(l, brighter(l.base, 70), fat * 0.36, -u * 0.2, -u * 0.42);
+        // A glint on the first cell of the letter.
+        p.setBrush(QColor(255, 255, 255, 240));
+        for (int k = 0; k < 35; ++k)
+            if (l.g->row[k / 5][k % 5] == '#') {
+                p.drawEllipse(l.tr.map(QPointF(k % 5 + 0.25, k / 5 + 0.2)), u * 0.32, u * 0.24);
+                break;
+            }
+    }
     p.restore();
 }
 
@@ -982,6 +953,9 @@ class Game : public QOpenGLWindow {
 public:
     explicit Game(const Options &opt) : m_opt(opt), m_audio(opt.sound, opt.offline) {
         setTitle("Mochimaru no Daibouken");
+        QSurfaceFormat format;
+        format.setSamples(4); // smooths the title's curves on the GPU
+        setFormat(format);
         resize(VW * 3, VH * 3);
         m_canvas = QImage(VW, VH, QImage::Format_RGB32);
 
@@ -1102,11 +1076,9 @@ public:
 
 protected:
     void paintGL() override {
-        QElapsedTimer t; t.start(); // TEMP
         QPainter p(this);
+        m_gl = true;
         render(p, size());
-        p.end();
-        ++g_paints; g_paintNs += t.nsecsElapsed(); // TEMP
     }
     void keyPressEvent(QKeyEvent *e) override {
         if (e->isAutoRepeat())
@@ -1835,29 +1807,23 @@ private:
         m_scale = std::min(double(size.width()) / VW, double(size.height()) / VH);
         m_ox = (size.width() - VW * m_scale) / 2;
         m_oy = (size.height() - VH * m_scale) / 2;
-        QElapsedTimer tt; tt.start(); // TEMP
         out.fillRect(0, 0, size.width(), size.height(), QColor("#4a3040"));
         {
             QPainter p(&m_canvas);
             drawWorld(p);
-            g_t[0] += tt.nsecsElapsed(); tt.restart();
             drawOverlay(p);
         }
-        g_t[1] += tt.nsecsElapsed(); tt.restart();
         out.drawImage(QRectF(m_ox, m_oy, VW * m_scale, VH * m_scale), m_canvas);
-        g_t[2] += tt.nsecsElapsed(); tt.restart();
         // The title is drawn at window resolution: bubble letters, and kana from a system font.
         if (m_state == State::Title) {
             static const QColor pastel[] = {QColor("#ff8fb8"), QColor("#ffa877"), QColor("#ffd84a"),
                                             QColor("#7fe0b0"), QColor("#74cdf2"), QColor("#b9a0ff")};
             static const QColor cream[] = {QColor("#fff6ea")};
             const double cx = m_ox + VW / 2.0 * m_scale;
-            bubbleText(out, "Mochimaru", cx, m_oy + 13 * m_scale, 3.4 * m_scale, m_tick, 0, pastel, 6);
-            bubbleText(out, "no Daibouken", cx, m_oy + 50 * m_scale, 1.8 * m_scale, m_tick + 20, 3, cream, 1);
-            g_t[3] += tt.nsecsElapsed(); tt.restart();
+            bubbleText(out, "Mochimaru", cx, m_oy + 13 * m_scale, 3.4 * m_scale, m_tick, 0, pastel, 6, !m_gl);
+            bubbleText(out, "no Daibouken", cx, m_oy + 50 * m_scale, 1.8 * m_scale, m_tick + 20, 3, cream, 1, !m_gl);
             text(out, QString::fromUtf8("もちまるのだいぼうけん"), 0, 68, VW, 8, QColor("#ffd84a"), Qt::AlignHCenter,
                  "Noto Sans CJK JP");
-            g_t[4] += tt.nsecsElapsed(); tt.restart();
         }
     }
 
@@ -2216,6 +2182,7 @@ private:
     std::vector<Particle> m_particles, m_petals;
     std::vector<Bump> m_bumps;
     float m_cam = 0;
+    bool m_gl = false; // painting the OpenGL window, rather than an image
     Walker m_parade[7];
     float m_paradeCam = -1000;
 
@@ -2288,13 +2255,5 @@ int main(int argc, char **argv) {
     }
     game.show();
     game.start();
-    if (qEnvironmentVariableIsSet("MOCHI_FPS")) { // TEMP
-        QTimer::singleShot(500, &game, [&] { xcbFullScreen(game.winId(), true); });
-        QTimer::singleShot(2500, &game, [&] { g_paints = 0; g_paintNs = 0; for (auto &x : g_t) x = 0; });
-        QTimer::singleShot(7500, &game, [&] { std::fprintf(stderr, "%dx%d fps %.1f paint %.2f ms\n", game.width(), game.height(), g_paints / 5.0, g_paintNs / 1e6 / std::max(1, g_paints)); for (int k = 0; k < 5; ++k) std::fprintf(stderr, "  t%d %.2f ms\n", k, g_t[k] / 1e6 / std::max(1, g_paints)); app.quit(); });
-    }
-    if (qEnvironmentVariableIsSet("MOCHI_GRAB")) { // TEMP
-        QTimer::singleShot(3000, &game, [&] { game.grabFramebuffer().save(qgetenv("MOCHI_GRAB")); std::fprintf(stderr, "valid %d size %dx%d dpr %f\n", game.isValid(), game.width(), game.height(), game.devicePixelRatio()); app.quit(); });
-    }
     return app.exec();
 }
