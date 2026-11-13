@@ -35,7 +35,7 @@
 #include <xcb/xcb.h>
 
 namespace {
-int g_paints = 0; qint64 g_paintNs = 0; // TEMP
+int g_paints = 0; qint64 g_paintNs = 0; qint64 g_t[5] = {}; // TEMP
 
 // Nt's window has no fullscreen call, so ask the window manager the way every X11 client does.
 void xcbFullScreen(quintptr window, bool on) {
@@ -1835,13 +1835,17 @@ private:
         m_scale = std::min(double(size.width()) / VW, double(size.height()) / VH);
         m_ox = (size.width() - VW * m_scale) / 2;
         m_oy = (size.height() - VH * m_scale) / 2;
+        QElapsedTimer tt; tt.start(); // TEMP
         out.fillRect(0, 0, size.width(), size.height(), QColor("#4a3040"));
         {
             QPainter p(&m_canvas);
             drawWorld(p);
+            g_t[0] += tt.nsecsElapsed(); tt.restart();
             drawOverlay(p);
         }
+        g_t[1] += tt.nsecsElapsed(); tt.restart();
         out.drawImage(QRectF(m_ox, m_oy, VW * m_scale, VH * m_scale), m_canvas);
+        g_t[2] += tt.nsecsElapsed(); tt.restart();
         // The title is drawn at window resolution: bubble letters, and kana from a system font.
         if (m_state == State::Title) {
             static const QColor pastel[] = {QColor("#ff8fb8"), QColor("#ffa877"), QColor("#ffd84a"),
@@ -1850,8 +1854,10 @@ private:
             const double cx = m_ox + VW / 2.0 * m_scale;
             bubbleText(out, "Mochimaru", cx, m_oy + 13 * m_scale, 3.4 * m_scale, m_tick, 0, pastel, 6);
             bubbleText(out, "no Daibouken", cx, m_oy + 50 * m_scale, 1.8 * m_scale, m_tick + 20, 3, cream, 1);
+            g_t[3] += tt.nsecsElapsed(); tt.restart();
             text(out, QString::fromUtf8("もちまるのだいぼうけん"), 0, 68, VW, 8, QColor("#ffd84a"), Qt::AlignHCenter,
                  "Noto Sans CJK JP");
+            g_t[4] += tt.nsecsElapsed(); tt.restart();
         }
     }
 
@@ -2284,8 +2290,8 @@ int main(int argc, char **argv) {
     game.start();
     if (qEnvironmentVariableIsSet("MOCHI_FPS")) { // TEMP
         QTimer::singleShot(500, &game, [&] { xcbFullScreen(game.winId(), true); });
-        QTimer::singleShot(2500, &game, [&] { g_paints = 0; g_paintNs = 0; });
-        QTimer::singleShot(7500, &game, [&] { std::fprintf(stderr, "%dx%d fps %.1f paint %.2f ms\n", game.width(), game.height(), g_paints / 5.0, g_paintNs / 1e6 / std::max(1, g_paints)); app.quit(); });
+        QTimer::singleShot(2500, &game, [&] { g_paints = 0; g_paintNs = 0; for (auto &x : g_t) x = 0; });
+        QTimer::singleShot(7500, &game, [&] { std::fprintf(stderr, "%dx%d fps %.1f paint %.2f ms\n", game.width(), game.height(), g_paints / 5.0, g_paintNs / 1e6 / std::max(1, g_paints)); for (int k = 0; k < 5; ++k) std::fprintf(stderr, "  t%d %.2f ms\n", k, g_t[k] / 1e6 / std::max(1, g_paints)); app.quit(); });
     }
     if (qEnvironmentVariableIsSet("MOCHI_GRAB")) { // TEMP
         QTimer::singleShot(3000, &game, [&] { game.grabFramebuffer().save(qgetenv("MOCHI_GRAB")); std::fprintf(stderr, "valid %d size %dx%d dpr %f\n", game.isValid(), game.width(), game.height(), game.devicePixelRatio()); app.quit(); });
