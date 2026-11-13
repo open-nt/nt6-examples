@@ -1219,7 +1219,11 @@ private:
 
     // A simple bot, to look at the game without playing it.
     void autoplay(Input &in) {
-        if (m_state == State::Title || m_state == State::GameOver || m_state == State::Win) {
+        if (m_state == State::Title) {
+            in.start = m_tick % 420 == 419; // let the title screen be seen for a while
+            return;
+        }
+        if (m_state == State::GameOver || m_state == State::Win) {
             in.start = m_tick % 60 == 30;
             return;
         }
