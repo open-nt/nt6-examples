@@ -61,6 +61,13 @@ target_link_libraries(sprite_sheet PRIVATE Nt6::Gui)
 add_executable(mochimaru platformer/mochimaru.cpp platformer/sprites.h)
 target_link_libraries(mochimaru PRIVATE Nt6::Gui Nt6::OpenGL Nt6::Gamepad Nt6::FM xcb)
 
+# A progressive path tracer on the Vulkan ray tracing pipeline, with NVIDIA shader execution reordering, ray tracing
+# position fetch and procedural spheres; see "Using Nt Vulkan" in the documentation. The SPIR-V shaders are checked in
+# (raytracing/shaders/compile.sh rebuilds them with glslc). Needs an Nt built with the Vulkan headers.
+nt_add_resources(pathtracer_resources raytracing/shaders/pathtracer.qrc)
+add_executable(pathtracer raytracing/pathtracer.cpp ${pathtracer_resources})
+target_link_libraries(pathtracer PRIVATE Nt6::Gui)
+
 # Shows an SVG file in a window, or converts what it draws; see "Using Nt SVG" in the documentation.
 add_executable(svg_viewer svg/svg_viewer.cpp)
 target_link_libraries(svg_viewer PRIVATE Nt6::SvgWidgets)

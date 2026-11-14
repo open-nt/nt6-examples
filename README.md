@@ -52,6 +52,7 @@ elsewhere, pass `-DCMAKE_PREFIX_PATH=<prefix>`.
 | `httpserver/` | `hello_server`                               | A small web service                                           |
 | `dbus/`       | `dbus_clock`                                 | A clock on the D-Bus session bus                              |
 | `platformer/` | `mochimaru`, `sprite_sheet`                  | A platform game: Nt Gamepad, Nt FM sound, a MIDI soundtrack and an OpenGL window |
+| `raytracing/` | `pathtracer`                                 | A path tracer on the Vulkan ray tracing pipeline in a `QVulkanWindow`, with the RTX extensions |
 
 Without a display, run the graphical examples with `-platform offscreen`.
 
@@ -74,6 +75,48 @@ soundtrack come from the FM synthesizer of Nt FM; the controls come from Nt Game
 
 The pixel art is text, in `platformer/sprites.h`; `sprite_sheet` draws all of it on one sheet for review.
 `mochimaru --export-song tune.mid` writes the built-in tune, as a starting point for your own.
+
+## Path tracer
+
+<p align="center"><img src="raytracing/pathtracer.png" alt="The path tracer: spheres of glass, metal and color on a checkered floor" width="640"></p>
+
+`raytracing/` renders a scene of spheres and boxes with a progressive path tracer that runs on the ray tracing
+pipeline of Vulkan (`VK_KHR_ray_tracing_pipeline`) in a `QVulkanWindow`: several paths per pixel per frame, as many
+as keep about 90 frames per second, up to 16 bounces, the sun and the lamps sampled directly with shadow rays, and the
+frames accumulated while the scene stands still. Run `build/pathtracer`, or `build/pathtracer --fly` to let the camera
+circle the scene; `pathtracer --devices` lists the GPUs and `--device N` picks one (by default the first discrete GPU
+with ray tracing), `--spp N` fixes the paths per pixel, `--vsync` holds the frames to the display's rate, `--still`
+starts with the scene at rest so the image converges, `--screenshot out.png` saves the picture when `--frames N` are
+done, and `--validate` enables the validation layer. It needs a GPU with ray tracing (NVIDIA RTX,
+AMD RDNA 2 or later, Intel Arc), or Mesa's `lavapipe` for a slow software run, and an Nt built with the Vulkan
+headers. On a GeForce RTX 5070 Ti Laptop GPU it traces about 1.7 billion paths per second at 2560x1440 with 6
+bounces, and the picture above converged in a few seconds.
+
+Beyond the core extensions it shows what an RTX GPU adds:
+
+- **Shader execution reordering** (`VK_NV_ray_tracing_invocation_reorder`, Ada and Blackwell): the threads of a wave
+  are regrouped by the material they hit before the hit shaders run. Press R to switch it on and off and watch the
+  frame rate in the title; the picture does not change.
+- **Ray tracing position fetch** (`VK_KHR_ray_tracing_position_fetch`): the closest-hit shader reads the vertices of
+  the triangle it hit from the acceleration structure, so the meshes bind no vertex buffers.
+- **Procedural geometry**: the spheres are analytic, intersected by an intersection shader, and perfectly round at any
+  distance; the boxes and the floor are triangles.
+- **A top level rebuilt every frame** while the scene moves, and shadow rays nested in the hit shaders for the
+  direct light.
+
+The window title shows the GPU, the resolution, the frame rate, the paths per pixel and per second, the bounces, the
+reordering state, and the sample count once the image converges.
+
+| Action                | Control                      |
+|-----------------------|------------------------------|
+| Orbit the camera      | Drag with the left button    |
+| Zoom                  | Mouse wheel                  |
+| Pause / resume motion | Space (paused, the image converges) |
+| Fly around            | F, or start with `--fly`     |
+| Reordering on/off     | R                            |
+| More / fewer bounces  | + / -                        |
+| Screenshot (PNG)      | S                            |
+| Quit                  | Q or Esc                     |
 
 ## Comparing with Qt 6
 

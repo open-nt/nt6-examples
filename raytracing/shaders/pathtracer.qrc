@@ -1,0 +1,11 @@
+<RCC>
+    <qresource prefix="/shaders">
+        <file>pathtracer.rgen.spv</file>
+        <file>pathtracer_ser.rgen.spv</file>
+        <file>pathtracer.rmiss.spv</file>
+        <file>shadow.rmiss.spv</file>
+        <file>triangles.rchit.spv</file>
+        <file>sphere.rint.spv</file>
+        <file>sphere.rchit.spv</file>
+    </qresource>
+</RCC>

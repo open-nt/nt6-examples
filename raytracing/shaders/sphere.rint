@@ -1,0 +1,22 @@
+// MIT License - see LICENSE
+//
+// Intersection with the unit sphere of an instance: analytic, so the spheres are perfectly round at any distance.
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+void main() {
+    const vec3 o = gl_ObjectRayOriginEXT;
+    const vec3 d = gl_ObjectRayDirectionEXT;
+    const float a = dot(d, d);
+    const float b = 2.0 * dot(o, d);
+    const float c = dot(o, o) - 1.0;
+    const float discriminant = b * b - 4.0 * a * c;
+    if (discriminant < 0.0)
+        return;
+    const float root = sqrt(discriminant);
+    float t = (-b - root) / (2.0 * a);
+    if (t < gl_RayTminEXT)
+        t = (-b + root) / (2.0 * a); // from inside
+    if (t >= gl_RayTminEXT && t <= gl_RayTmaxEXT)
+        reportIntersectionEXT(t, 0u);
+}
