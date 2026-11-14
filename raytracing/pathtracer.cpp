@@ -9,13 +9,25 @@
 // fetch (VK_KHR_ray_tracing_position_fetch, so the meshes bind no vertex buffers); the spheres are analytic, from an
 // intersection shader. It runs on any GPU with VK_KHR_ray_tracing_pipeline, and on Mesa's lavapipe in software.
 //
-//   pathtracer [--device INDEX] [--devices] [--frames N] [--vsync] [--spp N] [--no-reorder] [--still] [--fly]
-//              [--validate] [--size WxH] [--screenshot FILE.png]
+//   pathtracer [--device INDEX] [--devices] [--frames N] [--vsync] [--spp N] [--history N] [--candidates N]
+//              [--scale F] [--no-denoise] [--no-reorder] [--dlss] [--still] [--fly] [--validate] [--size WxH]
+//              [--screenshot FILE.png] [--record DIR] [--seconds S] [--fps N] [--passes N]
 //
-//   Drag: orbit   Wheel: zoom   Space: pause/resume motion   F: fly around   R: reordering   +/-: bounces
-//   S: screenshot   Q: quit
+// --dlss (or the N key) hands the frame to DLSS Ray Reconstruction instead of the history and the filter, on an
+// NVIDIA RTX GPU, when the example was built against the DLSS SDK: one path per pixel at the size DLSS asks for, with
+// its guides (albedos, normals, roughness, depth, motion vectors) and one sub-pixel jitter per frame; it denoises and
+// upscales to the window.
+//
+// --record renders a fly-through one frame at a time, offline: the scene and the camera step by the video's frame
+// time, each frame converges over --passes renderings (8, times --spp paths per pixel, 16 by default) before it is saved
+// as DIR/frame_NNNNN.png, and ffmpeg, if installed, encodes DIR/flythrough.mp4.
+//
+//   Drag: orbit   Wheel: zoom   Space: pause/resume motion   F: fly around   R: reordering   D: denoiser
+//   N: DLSS ray reconstruction   +/-: bounces   S: screenshot   Q: quit
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QProcess>
 #include <QGuiApplication>
 #include <QMatrix4x4>
 #include <QString>
@@ -31,7 +43,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
+
+#ifdef HAVE_DLSS
+// NVIDIA's DLSS SDK (proprietary): built in with -DDLSS_SDK=<checkout of github.com/NVIDIA/DLSS>.
+#include <nvsdk_ngx_helpers.h>
+#include <nvsdk_ngx_helpers_dlssd_vk.h>
+#include <nvsdk_ngx_helpers_vk.h>
+#endif
 
 namespace {
 
@@ -91,18 +111,35 @@ struct Object {
     float spin = 0.0f; // degrees per second about the vertical axis
 };
 
-// The camera, as the ray generation shader gets it in the push constants.
-struct CameraConstants {
+// The camera of this frame and of the previous one, and the frame's parameters, as the shaders read them from a
+// uniform buffer (std140: the vec4s first, then the scalars).
+struct FrameConstants {
     float position[4];
     float forward[4];
     float right[4];
     float up[4];
+    float previousPosition[4];
+    float previousForward[4];
+    float previousRight[4];
+    float previousUp[4];
     uint32_t frame;
-    uint32_t accumulated;
+    uint32_t samples;
     uint32_t bounces;
     uint32_t flags;
-    uint32_t samples;
     uint32_t lightCount;
+    uint32_t maxHistory;
+    uint32_t candidates;
+    uint32_t denoise;
+    uint32_t dlss;
+    uint32_t padding[3];
+    float jitter[4];
+};
+
+// The push constants of the compute passes: the à-trous step and which images to read and write.
+struct PassConstants {
+    int32_t step;
+    int32_t source;
+    int32_t target;
 };
 
 // A sphere light, as the shaders read it: position and radius, then the emitted radiance.
@@ -134,6 +171,13 @@ public:
     bool reorder = true;
     uint32_t bounces = 6;
     uint32_t samples = 0; // paths per pixel per frame; 0 picks as many as keep the frame rate up
+    uint32_t history = 48; // previous samples a pixel keeps while things move; at rest it keeps them all
+    bool denoise = true;
+    bool dlss = false; // DLSS Ray Reconstruction, where the build and the GPU have it
+    uint32_t candidates = 8; // light candidates resampled per diffuse hit
+    float scale = 0.0f; // the rendered size over the window's; 0 keeps the rendering near 1080p and upscales
+    float fixedTime = -1.0f; // recording: the scene's time, instead of the clock
+    bool resetHistory = false; // recording: the next frame starts a new accumulation
     bool cameraMoved = true;
     int frameLimit() const { return m_frameLimit; }
 
@@ -165,6 +209,12 @@ protected:
             break;
         case Qt::Key_R:
             reorder = !reorder;
+            break;
+        case Qt::Key_D:
+            denoise = !denoise;
+            break;
+        case Qt::Key_N:
+            dlss = !dlss;
             break;
         case Qt::Key_Plus:
         case Qt::Key_Equal: // the + key without shift
@@ -198,6 +248,23 @@ private:
     int m_screenshots = 0;
     QPoint m_last;
 };
+
+// Element `index` of the Halton sequence in `base`, in [0, 1): the sub-pixel jitter pattern DLSS is trained on.
+static float halton(uint32_t index, uint32_t base) {
+    float f = 1.0f, result = 0.0f;
+    while (index > 0) {
+        f /= static_cast<float>(base);
+        result += f * static_cast<float>(index % base);
+        index /= base;
+    }
+    return result;
+}
+
+// The pitch and distance of the flight at `time`; the yaw advances at 12 degrees a second.
+static void flyPath(float time, float *pitch, float *distance) {
+    *pitch = 14.0f + 10.0f * std::sin(time * 0.37f);
+    *distance = 14.0f + 5.0f * std::sin(time * 0.23f);
+}
 
 class PathTracer : public QVulkanWindowRenderer {
 public:
@@ -270,6 +337,9 @@ public:
         std::printf("pathtracer: %s, ray recursion depth %u, reordering %s\n", props.properties.deviceName,
                     m_rtProps.maxRayRecursionDepth, m_hasReorder ? "available" : "not available");
 
+#ifdef HAVE_DLSS
+        initNgx();
+#endif
         buildScene();
         createGeometry();
         createMaterials();
@@ -278,47 +348,122 @@ public:
         m_pipeline = createPipeline(":/shaders/pathtracer.rgen.spv", m_sbt);
         if (m_hasReorder)
             m_reorderPipeline = createPipeline(":/shaders/pathtracer_ser.rgen.spv", m_reorderSbt);
+        createComputePipelines();
         createDescriptors();
         m_clock.start();
         m_statsClock.start();
     }
 
     void initSwapChainResources() override {
-        const QSize size = m_window->swapChainImageSize();
-        createImage(VK_FORMAT_R32G32B32A32_SFLOAT, size, VK_IMAGE_USAGE_STORAGE_BIT, &m_accumulation);
-        createImage(VK_FORMAT_R8G8B8A8_UNORM, size, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        // The rendering happens at a fraction of the window's size when it is large, and is upscaled at the end,
+        // which is where DLSS sits in an RTX pipeline; with ray reconstruction, DLSS says what size it wants.
+        const QSize windowSize = m_window->swapChainImageSize();
+        m_dlssActive = false;
+        float scale = m_window->scale;
+        if (scale <= 0.0f) {
+            const float pixels = static_cast<float>(windowSize.width()) * static_cast<float>(windowSize.height());
+            scale = std::min(1.0f, std::sqrt(2.1e6f / pixels));
+        }
+        m_renderSize = QSize(std::max(1, static_cast<int>(std::lround(static_cast<float>(windowSize.width()) * scale))),
+                             std::max(1, static_cast<int>(std::lround(static_cast<float>(windowSize.height()) * scale))));
+#ifdef HAVE_DLSS
+        if (m_window->dlss && m_rrAvailable) {
+            unsigned int optimalWidth = 0, optimalHeight = 0, maxWidth = 0, maxHeight = 0, minWidth = 0, minHeight = 0;
+            float sharpness = 0.0f;
+            const NVSDK_NGX_Result result = NGX_DLSS_GET_OPTIMAL_SETTINGS(
+                m_ngxParams, static_cast<unsigned int>(windowSize.width()), static_cast<unsigned int>(windowSize.height()),
+                NVSDK_NGX_PerfQuality_Value_Balanced, &optimalWidth, &optimalHeight, &maxWidth, &maxHeight, &minWidth,
+                &minHeight, &sharpness);
+            if (NVSDK_NGX_SUCCEED(result) && optimalWidth > 0 && optimalHeight > 0)
+                m_renderSize = QSize(static_cast<int>(optimalWidth), static_cast<int>(optimalHeight));
+            else
+                m_renderSize = QSize(std::max(64, windowSize.width() * 58 / 100), std::max(32, windowSize.height() * 58 / 100));
+            m_dlssActive = true;
+        }
+#endif
+        const QSize size = m_renderSize;
+        m_outputSize = m_dlssActive ? windowSize : size;
+        // The history ping-pongs: frame f reads what frame 1 - f wrote.
+        for (int i = 0; i < 2; ++i) {
+            createImage(VK_FORMAT_R32G32B32A32_SFLOAT, size, VK_IMAGE_USAGE_STORAGE_BIT, &m_accumulation[i]);
+            createImage(VK_FORMAT_R32G32B32A32_SFLOAT, size, VK_IMAGE_USAGE_STORAGE_BIT, &m_hit[i]);
+            m_imagesUsed[i] = false;
+        }
+        createImage(VK_FORMAT_R8G8B8A8_UNORM, m_outputSize, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                     &m_output);
-        const VkFormat color = m_window->colorFormat();
-        m_swapRedBlue = color == VK_FORMAT_B8G8R8A8_UNORM || color == VK_FORMAT_B8G8R8A8_SRGB;
-        m_accumulated = 0;
-        m_firstFrameOfImages = true;
+        createImage(VK_FORMAT_R16G16B16A16_SFLOAT, size, VK_IMAGE_USAGE_STORAGE_BIT, &m_albedo);
+        createImage(VK_FORMAT_R16G16B16A16_SFLOAT, size, VK_IMAGE_USAGE_STORAGE_BIT, &m_normal);
+        createImage(VK_FORMAT_R32G32B32A32_SFLOAT, size, VK_IMAGE_USAGE_STORAGE_BIT, &m_filter[0]);
+        createImage(VK_FORMAT_R32G32B32A32_SFLOAT, size, VK_IMAGE_USAGE_STORAGE_BIT, &m_filter[1]);
+        // The guides of ray reconstruction, and its result at the window's size; made whether or not it is used,
+        // since the shaders refer to them.
+        createImage(VK_FORMAT_R16G16B16A16_SFLOAT, size, VK_IMAGE_USAGE_STORAGE_BIT, &m_color);
+        createImage(VK_FORMAT_R16G16B16A16_SFLOAT, size, VK_IMAGE_USAGE_STORAGE_BIT, &m_specularAlbedo);
+        createImage(VK_FORMAT_R32_SFLOAT, size, VK_IMAGE_USAGE_STORAGE_BIT, &m_depth);
+        createImage(VK_FORMAT_R16G16_SFLOAT, size, VK_IMAGE_USAGE_STORAGE_BIT, &m_motion);
+        createImage(VK_FORMAT_R16_SFLOAT, size, VK_IMAGE_USAGE_STORAGE_BIT, &m_roughness);
+        createImage(VK_FORMAT_R16G16B16A16_SFLOAT, m_dlssActive ? windowSize : QSize(1, 1), VK_IMAGE_USAGE_STORAGE_BIT,
+                    &m_reconstructed);
+#ifdef HAVE_DLSS
+        if (m_dlssActive)
+            createRayReconstruction(size, windowSize);
+#endif
+        m_swapRedBlue = false; // the blit to the swapchain image converts the format
+        m_stillFrames = 0;
 
-        VkDescriptorImageInfo accumulationInfo{VK_NULL_HANDLE, m_accumulation.view, VK_IMAGE_LAYOUT_GENERAL};
-        VkDescriptorImageInfo outputInfo{VK_NULL_HANDLE, m_output.view, VK_IMAGE_LAYOUT_GENERAL};
-        for (VkDescriptorSet set : m_descriptorSets) {
-            VkWriteDescriptorSet writes[2] = {make<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET),
-                                              make<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET)};
-            writes[0].dstSet = set;
-            writes[0].dstBinding = 1;
-            writes[0].descriptorCount = 1;
-            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            writes[0].pImageInfo = &accumulationInfo;
-            writes[1] = writes[0];
-            writes[1].dstBinding = 2;
-            writes[1].pImageInfo = &outputInfo;
-            m_df->vkUpdateDescriptorSets(m_dev, 2, writes, 0, nullptr);
+        for (std::size_t frame = 0; frame < m_descriptorSets.size(); ++frame) {
+            const std::size_t current = frame % 2, previous = 1 - current;
+            const struct {
+                uint32_t binding;
+                VkImageView view;
+            } images[15] = {
+                {1, m_accumulation[previous].view}, {2, m_accumulation[current].view}, {3, m_hit[previous].view},
+                {4, m_hit[current].view},           {5, m_output.view},                {10, m_albedo.view},
+                {11, m_normal.view},                {12, m_filter[0].view},            {13, m_filter[1].view},
+                {14, m_color.view},                 {15, m_specularAlbedo.view},       {16, m_depth.view},
+                {17, m_motion.view},                {18, m_roughness.view},            {19, m_reconstructed.view},
+            };
+            VkDescriptorImageInfo infos[15];
+            VkWriteDescriptorSet writes[15];
+            for (uint32_t i = 0; i < 15; ++i) {
+                infos[i] = {VK_NULL_HANDLE, images[i].view, VK_IMAGE_LAYOUT_GENERAL};
+                writes[i] = make<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
+                writes[i].dstSet = m_descriptorSets[frame];
+                writes[i].dstBinding = images[i].binding;
+                writes[i].descriptorCount = 1;
+                writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                writes[i].pImageInfo = &infos[i];
+            }
+            m_df->vkUpdateDescriptorSets(m_dev, 15, writes, 0, nullptr);
         }
     }
 
     void releaseSwapChainResources() override {
-        destroyImage(m_accumulation);
+#ifdef HAVE_DLSS
+        releaseRayReconstruction();
+#endif
+        for (int i = 0; i < 2; ++i) {
+            destroyImage(m_accumulation[i]);
+            destroyImage(m_hit[i]);
+            destroyImage(m_filter[i]);
+        }
         destroyImage(m_output);
+        destroyImage(m_albedo);
+        destroyImage(m_normal);
+        for (Image *image : {&m_color, &m_specularAlbedo, &m_depth, &m_motion, &m_roughness, &m_reconstructed})
+            destroyImage(*image);
     }
 
     void releaseResources() override {
         if (!m_dev)
             return;
+#ifdef HAVE_DLSS
+        shutdownNgx();
+#endif
         m_df->vkDestroyDescriptorPool(m_dev, m_descriptorPool, nullptr);
+        m_df->vkDestroyPipeline(m_dev, m_atrousPipeline, nullptr);
+        m_df->vkDestroyPipeline(m_dev, m_composePipeline, nullptr);
+        m_df->vkDestroyPipelineLayout(m_dev, m_computeLayout, nullptr);
         m_df->vkDestroyPipeline(m_dev, m_pipeline, nullptr);
         if (m_reorderPipeline)
             m_df->vkDestroyPipeline(m_dev, m_reorderPipeline, nullptr);
@@ -334,6 +479,12 @@ public:
         for (Buffer &b : m_lightBuffers)
             destroyBuffer(b);
         m_lightBuffers.clear();
+        for (Buffer &b : m_previousTransformBuffers)
+            destroyBuffer(b);
+        m_previousTransformBuffers.clear();
+        for (Buffer &b : m_frameBuffers)
+            destroyBuffer(b);
+        m_frameBuffers.clear();
         destroyBuffer(m_materials);
         for (AccelerationStructure &as : m_blas)
             destroyAccelerationStructure(as);
@@ -346,38 +497,59 @@ public:
 
     void startNextFrame() override {
         VkCommandBuffer cmd = m_window->currentCommandBuffer();
-        const QSize size = m_window->swapChainImageSize();
+#ifdef HAVE_DLSS
+        // Switching ray reconstruction on or off changes the render size and the resources: remake them.
+        if ((m_window->dlss && m_rrAvailable) != m_dlssActive) {
+            m_df->vkDeviceWaitIdle(m_dev);
+            releaseSwapChainResources();
+            initSwapChainResources();
+        }
+#endif
+        const bool dlss = m_dlssActive;
+        const QSize size = m_renderSize;
         const auto width = static_cast<uint32_t>(size.width());
         const auto height = static_cast<uint32_t>(size.height());
         const int frame = m_window->currentFrame();
-        const float time = static_cast<float>(m_clock.elapsed()) / 1000.0f;
+        const bool recording = m_window->fixedTime >= 0.0f;
+        const float time = recording ? m_window->fixedTime : static_cast<float>(m_clock.elapsed()) / 1000.0f;
 
-        // The scene moves while animating, so the top level is rebuilt and the accumulation starts over.
+        // The scene moves while animating, so the top level is rebuilt; the previous transforms go to the shaders for
+        // the reprojection of the history.
         const bool moving = m_window->animating;
-        if (moving)
+        if (moving || recording)
             m_sceneTime = time;
+        std::memcpy(m_previousTransformBuffers[static_cast<std::size_t>(frame)].mapped, m_lastTransforms.data(),
+                    m_lastTransforms.size() * sizeof(float));
         writeInstances(frame, m_sceneTime);
         buildTopLevel(cmd, frame);
-        if (moving || m_window->cameraMoved || m_firstFrameOfImages)
-            m_accumulated = 0;
+        // While anything moves a pixel keeps a short history; at rest, all of it, and the image converges.
+        const bool changing = moving || m_window->flying || m_window->cameraMoved;
         m_window->cameraMoved = false;
+        m_stillFrames = changing ? 0 : m_stillFrames + 1;
 
-        // The images: the accumulation keeps its contents between frames, the output is rewritten.
-        imageBarrier(cmd, m_accumulation.image, m_firstFrameOfImages ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
-                     VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-                     VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                     VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR);
-        imageBarrier(cmd, m_output.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
-                     VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                     VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR);
-        m_firstFrameOfImages = false;
+        // The images: the history images keep their contents, the output is rewritten.
+        const std::size_t current = static_cast<std::size_t>(frame) % 2, previous = 1 - current;
+        for (std::size_t i : {previous, current}) {
+            for (Image *image : {&m_accumulation[i], &m_hit[i]}) {
+                imageBarrier(cmd, image->image, m_imagesUsed[i] ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                             VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                             VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR);
+            }
+            m_imagesUsed[i] = true;
+        }
+        for (Image *image : {&m_output, &m_albedo, &m_normal, &m_filter[0], &m_filter[1], &m_color, &m_specularAlbedo,
+                             &m_depth, &m_motion, &m_roughness, &m_reconstructed}) {
+            imageBarrier(cmd, image->image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
+                         VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+        }
 
         // Flying: the camera circles the scene, swooping in and out.
         if (m_window->flying) {
             const float dt = std::min(time - m_lastFrameTime, 0.1f);
             m_window->yaw += dt * 12.0f;
-            m_window->pitch = 14.0f + 10.0f * std::sin(time * 0.37f);
-            m_window->distance = 14.0f + 5.0f * std::sin(time * 0.23f);
+            flyPath(time, &m_window->pitch, &m_window->distance);
             m_window->cameraMoved = true;
         }
         m_lastFrameTime = time;
@@ -391,45 +563,96 @@ public:
         const QVector3D forward = (target - eye).normalized();
         const QVector3D right = QVector3D::crossProduct(forward, QVector3D(0.0f, 1.0f, 0.0f)).normalized();
         const QVector3D up = QVector3D::crossProduct(right, forward).normalized();
-        CameraConstants constants{};
+        FrameConstants constants{};
         setVector(constants.position, eye, std::tan(0.5f * 50.0f * 3.14159265f / 180.0f));
         setVector(constants.forward, forward, static_cast<float>(width) / static_cast<float>(height));
         setVector(constants.right, right, 0.0f);
         setVector(constants.up, up, 0.0f);
+        if (m_frameIndex == 0)
+            m_lastCamera = constants;
+        std::memcpy(constants.previousPosition, m_lastCamera.position, 4 * sizeof(float));
+        std::memcpy(constants.previousForward, m_lastCamera.forward, 4 * sizeof(float));
+        std::memcpy(constants.previousRight, m_lastCamera.right, 4 * sizeof(float));
+        std::memcpy(constants.previousUp, m_lastCamera.up, 4 * sizeof(float));
         constants.frame = m_frameIndex++;
-        constants.accumulated = m_accumulated;
+        constants.samples = dlss ? 1u : m_window->samples > 0 ? m_window->samples : m_autoSamples;
         constants.bounces = m_window->bounces;
         constants.flags = m_swapRedBlue ? 1u : 0u;
-        constants.samples = m_window->samples > 0 ? m_window->samples : m_autoSamples;
         constants.lightCount = m_lightCount;
+        constants.maxHistory = dlss ? 0u : changing ? m_window->history : 0x7fffffffu;
+        constants.dlss = dlss ? 1u : 0u;
+        // Ray reconstruction integrates the frames itself and wants one sub-pixel offset per frame, from a Halton
+        // sequence long enough to cover the output pixels under the upscale.
+        const uint32_t phase = (m_jitterIndex++ % 32u) + 1u;
+        constants.jitter[0] = dlss ? halton(phase, 2) : 0.5f;
+        constants.jitter[1] = dlss ? halton(phase, 3) : 0.5f;
+        if (m_window->resetHistory) { // a new video frame: nothing of the previous one is reused
+            constants.maxHistory = 0;
+            m_window->resetHistory = false;
+            m_stillFrames = 0;
+        }
+        constants.candidates = m_window->candidates;
+        constants.denoise = m_window->denoise ? 1u : 0u;
+        std::memcpy(m_frameBuffers[static_cast<std::size_t>(frame)].mapped, &constants, sizeof(constants));
+        m_lastCamera = constants;
 
         // Trace: the plain pipeline, or the one with shader execution reordering.
         const bool reorder = m_hasReorder && m_window->reorder;
         m_df->vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, reorder ? m_reorderPipeline : m_pipeline);
         m_df->vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_pipelineLayout, 0, 1,
                                       &m_descriptorSets[static_cast<std::size_t>(frame)], 0, nullptr);
-        m_df->vkCmdPushConstants(cmd, m_pipelineLayout,
-                                 VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR |
-                                     VK_SHADER_STAGE_MISS_BIT_KHR,
-                                 0, sizeof(constants), &constants);
         const ShaderBindingTable &sbt = reorder ? m_reorderSbt : m_sbt;
         m_cmdTraceRays(cmd, &sbt.rgen, &sbt.miss, &sbt.hit, &sbt.callable, width, height, 1);
-        ++m_accumulated;
+
+        // Ray reconstruction, or the denoiser: four à-trous iterations over the irradiance; then the compose pass.
+        computeBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR);
+        PassConstants pass{1, 0, 1};
+        uint32_t groupsX = (width + 7) / 8, groupsY = (height + 7) / 8;
+        if (dlss) {
+#ifdef HAVE_DLSS
+            evaluateRayReconstruction(cmd, size, constants);
+            computeBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+#endif
+            pass.source = 3;
+            groupsX = (static_cast<uint32_t>(m_outputSize.width()) + 7) / 8;
+            groupsY = (static_cast<uint32_t>(m_outputSize.height()) + 7) / 8;
+        }
+        m_df->vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computeLayout, 0, 1,
+                                      &m_descriptorSets[static_cast<std::size_t>(frame)], 0, nullptr);
+        if (m_window->denoise && !dlss) {
+            m_df->vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_atrousPipeline);
+            for (int iteration = 0; iteration < 4; ++iteration) {
+                pass.step = 1 << iteration;
+                pass.source = iteration == 0 ? 0 : (iteration % 2 == 1 ? 1 : 2);
+                pass.target = iteration % 2 == 0 ? 1 : 2;
+                m_df->vkCmdPushConstants(cmd, m_computeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pass), &pass);
+                m_df->vkCmdDispatch(cmd, groupsX, groupsY, 1);
+                computeBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+            }
+            pass.source = pass.target; // the last one written
+        }
+        m_df->vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_composePipeline);
+        m_df->vkCmdPushConstants(cmd, m_computeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pass), &pass);
+        m_df->vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
         // The output to the swapchain image.
         VkImage target_image = m_window->swapChainImage(m_window->currentSwapChainImageIndex());
         imageBarrier(cmd, m_output.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                     VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                     VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                      VK_PIPELINE_STAGE_TRANSFER_BIT);
         imageBarrier(cmd, target_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
                      VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                      VK_PIPELINE_STAGE_TRANSFER_BIT);
-        VkImageCopy copy{};
-        copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        copy.dstSubresource = copy.srcSubresource;
-        copy.extent = {width, height, 1};
-        m_df->vkCmdCopyImage(cmd, m_output.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target_image,
-                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        // Scaled up to the window with a linear filter.
+        const QSize windowSize = m_window->swapChainImageSize();
+        VkImageBlit blit{};
+        blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        blit.dstSubresource = blit.srcSubresource;
+        blit.srcOffsets[1] = {m_outputSize.width(), m_outputSize.height(), 1};
+        blit.dstOffsets[1] = {windowSize.width(), windowSize.height(), 1};
+        m_df->vkCmdBlitImage(cmd, m_output.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target_image,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                             m_outputSize == windowSize ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
         imageBarrier(cmd, target_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                      VK_ACCESS_TRANSFER_WRITE_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT,
                      VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
@@ -440,6 +663,145 @@ public:
     }
 
 private:
+#ifdef HAVE_DLSS
+    // NGX, the driver's side of DLSS: started on the device, asked whether ray reconstruction is there.
+    void initNgx() {
+        QVulkanInstance *inst = m_window->vulkanInstance();
+        const QByteArray dataDir = (QDir::tempPath() + "/nt-pathtracer-ngx").toUtf8();
+        QDir().mkpath(QString::fromUtf8(dataDir));
+        m_ngxDataPath = widen(dataDir);
+        m_ngxLibraryPath = widen(QByteArray(DLSS_SDK_LIB_DIR));
+        const wchar_t *paths[1] = {m_ngxLibraryPath.c_str()};
+        NVSDK_NGX_FeatureCommonInfo info{};
+        info.PathListInfo.Path = paths;
+        info.PathListInfo.Length = 1;
+        auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(inst->getInstanceProcAddr("vkGetInstanceProcAddr"));
+        auto gdpa = reinterpret_cast<PFN_vkGetDeviceProcAddr>(inst->getInstanceProcAddr("vkGetDeviceProcAddr"));
+        NVSDK_NGX_Result result = NVSDK_NGX_VULKAN_Init_with_ProjectID(
+            "4b2f0c1e-7a3d-4d5e-9b8a-2c6f1e0d9a47", NVSDK_NGX_ENGINE_TYPE_CUSTOM, "1.0", m_ngxDataPath.c_str(),
+            inst->vkInstance(), m_window->physicalDevice(), m_dev, gipa, gdpa, &info, NVSDK_NGX_Version_API);
+        if (NVSDK_NGX_FAILED(result)) {
+            std::printf("pathtracer: NGX did not start (0x%x): no DLSS on this device\n", static_cast<unsigned>(result));
+            return;
+        }
+        m_ngxReady = true;
+        result = NVSDK_NGX_VULKAN_GetCapabilityParameters(&m_ngxParams);
+        if (NVSDK_NGX_FAILED(result)) {
+            std::printf("pathtracer: NGX capabilities unavailable (0x%x)\n", static_cast<unsigned>(result));
+            return;
+        }
+        int available = 0, needsDriver = 0, initResult = 0;
+        NVSDK_NGX_Parameter_GetI(m_ngxParams, NVSDK_NGX_Parameter_SuperSamplingDenoising_Available, &available);
+        NVSDK_NGX_Parameter_GetI(m_ngxParams, NVSDK_NGX_Parameter_SuperSamplingDenoising_NeedsUpdatedDriver, &needsDriver);
+        NVSDK_NGX_Parameter_GetI(m_ngxParams, NVSDK_NGX_Parameter_SuperSamplingDenoising_FeatureInitResult, &initResult);
+        m_rrAvailable = available != 0;
+        std::printf("pathtracer: DLSS Ray Reconstruction %s%s\n", m_rrAvailable ? "available" : "not available",
+                    needsDriver ? " (the driver is too old)" : "");
+        if (!m_rrAvailable && initResult != 0)
+            std::printf("pathtracer: NGX feature init result 0x%x\n", static_cast<unsigned>(initResult));
+    }
+
+    void shutdownNgx() {
+        if (m_ngxParams)
+            NVSDK_NGX_VULKAN_DestroyParameters(m_ngxParams);
+        m_ngxParams = nullptr;
+        if (m_ngxReady)
+            NVSDK_NGX_VULKAN_Shutdown1(m_dev);
+        m_ngxReady = false;
+        m_rrAvailable = false;
+    }
+
+    static std::wstring widen(const QByteArray &utf8) {
+        std::wstring wide;
+        for (const char c : utf8)
+            wide.push_back(static_cast<wchar_t>(static_cast<unsigned char>(c)));
+        return wide;
+    }
+
+    // The ray reconstruction feature: denoises `renderSize` into `windowSize`, with HDR colour and motion vectors at
+    // the render size.
+    void createRayReconstruction(const QSize &renderSize, const QSize &windowSize) {
+        NVSDK_NGX_DLSSD_Create_Params params{};
+        params.InDenoiseMode = NVSDK_NGX_DLSS_Denoise_Mode_DLUnified;
+        params.InRoughnessMode = NVSDK_NGX_DLSS_Roughness_Mode_Unpacked;
+        params.InUseHWDepth = NVSDK_NGX_DLSS_Depth_Type_Linear;
+        params.InWidth = static_cast<unsigned int>(renderSize.width());
+        params.InHeight = static_cast<unsigned int>(renderSize.height());
+        params.InTargetWidth = static_cast<unsigned int>(windowSize.width());
+        params.InTargetHeight = static_cast<unsigned int>(windowSize.height());
+        params.InPerfQualityValue = NVSDK_NGX_PerfQuality_Value_Balanced;
+        params.InFeatureCreateFlags = NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_MVLowRes;
+        NVSDK_NGX_Result result = NVSDK_NGX_Result_Fail;
+        submitAndWait([&](VkCommandBuffer cmd) {
+            result = NGX_VULKAN_CREATE_DLSSD_EXT1(m_dev, cmd, 1, 1, &m_rrFeature, m_ngxParams, &params);
+        });
+        if (NVSDK_NGX_FAILED(result)) {
+            std::printf("pathtracer: could not create DLSS Ray Reconstruction (0x%x)\n", static_cast<unsigned>(result));
+            m_rrFeature = nullptr;
+            m_rrAvailable = false;
+            m_dlssActive = false;
+            m_outputSize = renderSize;
+            return;
+        }
+        m_rrReset = true;
+        std::printf("pathtracer: DLSS Ray Reconstruction %dx%d -> %dx%d\n", renderSize.width(), renderSize.height(),
+                    windowSize.width(), windowSize.height());
+    }
+
+    void releaseRayReconstruction() {
+        if (m_rrFeature)
+            NVSDK_NGX_VULKAN_ReleaseFeature(m_rrFeature);
+        m_rrFeature = nullptr;
+    }
+
+    static NVSDK_NGX_Resource_VK ngxResource(const Image &image, VkFormat format, const QSize &size, bool readWrite) {
+        return NVSDK_NGX_Create_ImageView_Resource_VK(image.view, image.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+                                                     format, static_cast<unsigned int>(size.width()),
+                                                     static_cast<unsigned int>(size.height()), readWrite);
+    }
+
+    // The frame's guides and colour go in, the denoised, upscaled colour comes out in m_reconstructed.
+    void evaluateRayReconstruction(VkCommandBuffer cmd, const QSize &renderSize, const FrameConstants &constants) {
+        if (!m_rrFeature)
+            return;
+        const QSize windowSize = m_outputSize;
+        NVSDK_NGX_Resource_VK color = ngxResource(m_color, VK_FORMAT_R16G16B16A16_SFLOAT, renderSize, false);
+        NVSDK_NGX_Resource_VK diffuseAlbedo = ngxResource(m_albedo, VK_FORMAT_R16G16B16A16_SFLOAT, renderSize, false);
+        NVSDK_NGX_Resource_VK specularAlbedo =
+            ngxResource(m_specularAlbedo, VK_FORMAT_R16G16B16A16_SFLOAT, renderSize, false);
+        NVSDK_NGX_Resource_VK normals = ngxResource(m_normal, VK_FORMAT_R16G16B16A16_SFLOAT, renderSize, false);
+        NVSDK_NGX_Resource_VK roughness = ngxResource(m_roughness, VK_FORMAT_R16_SFLOAT, renderSize, false);
+        NVSDK_NGX_Resource_VK depth = ngxResource(m_depth, VK_FORMAT_R32_SFLOAT, renderSize, false);
+        NVSDK_NGX_Resource_VK motion = ngxResource(m_motion, VK_FORMAT_R16G16_SFLOAT, renderSize, false);
+        NVSDK_NGX_Resource_VK output = ngxResource(m_reconstructed, VK_FORMAT_R16G16B16A16_SFLOAT, windowSize, true);
+        NVSDK_NGX_VK_DLSSD_Eval_Params eval{};
+        eval.pInColor = &color;
+        eval.pInOutput = &output;
+        eval.pInDiffuseAlbedo = &diffuseAlbedo;
+        eval.pInSpecularAlbedo = &specularAlbedo;
+        eval.pInNormals = &normals;
+        eval.pInRoughness = &roughness;
+        eval.pInDepth = &depth;
+        eval.pInMotionVectors = &motion;
+        eval.InJitterOffsetX = constants.jitter[0] - 0.5f;
+        eval.InJitterOffsetY = constants.jitter[1] - 0.5f;
+        eval.InRenderSubrectDimensions = {static_cast<unsigned int>(renderSize.width()),
+                                          static_cast<unsigned int>(renderSize.height())};
+        eval.InReset = m_rrReset ? 1 : 0;
+        eval.InMVScaleX = 1.0f;
+        eval.InMVScaleY = 1.0f;
+        eval.InPreExposure = 1.0f;
+        eval.InExposureScale = 1.0f;
+        eval.InFrameTimeDeltaInMsec = 1000.0f / 90.0f;
+        const NVSDK_NGX_Result result = NGX_VULKAN_EVALUATE_DLSSD_EXT(cmd, m_rrFeature, m_ngxParams, &eval);
+        if (NVSDK_NGX_FAILED(result) && !m_rrEvaluateFailed) {
+            std::printf("pathtracer: DLSS Ray Reconstruction evaluate failed (0x%x)\n", static_cast<unsigned>(result));
+            m_rrEvaluateFailed = true;
+        }
+        m_rrReset = false;
+    }
+#endif
+
     struct Image {
         VkImage image = VK_NULL_HANDLE;
         VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -530,7 +892,7 @@ private:
         info.arrayLayers = 1;
         info.samples = VK_SAMPLE_COUNT_1_BIT;
         info.tiling = VK_IMAGE_TILING_OPTIMAL;
-        info.usage = usage;
+        info.usage = usage | VK_IMAGE_USAGE_SAMPLED_BIT; // ray reconstruction samples its guides
         info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         check(m_df->vkCreateImage(m_dev, &info, nullptr, &image->image), "vkCreateImage");
         VkMemoryRequirements req{};
@@ -556,6 +918,42 @@ private:
         if (image.memory)
             m_df->vkFreeMemory(m_dev, image.memory, nullptr);
         image = Image();
+    }
+
+    // Makes what shaders wrote at `srcStage` visible to the compute shaders that follow.
+    void computeBarrier(VkCommandBuffer cmd, VkPipelineStageFlags srcStage) {
+        auto barrier = make<VkMemoryBarrier>(VK_STRUCTURE_TYPE_MEMORY_BARRIER);
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        m_df->vkCmdPipelineBarrier(cmd, srcStage, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0,
+                                   nullptr);
+    }
+
+    // The à-trous filter and the compose pass share the descriptor set of the frame and a layout with the pass
+    // constants.
+    void createComputePipelines() {
+        VkPushConstantRange pushConstants{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PassConstants)};
+        auto layoutInfo = make<VkPipelineLayoutCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
+        layoutInfo.setLayoutCount = 1;
+        layoutInfo.pSetLayouts = &m_descriptorSetLayout;
+        layoutInfo.pushConstantRangeCount = 1;
+        layoutInfo.pPushConstantRanges = &pushConstants;
+        check(m_df->vkCreatePipelineLayout(m_dev, &layoutInfo, nullptr, &m_computeLayout), "vkCreatePipelineLayout");
+        const struct {
+            const char *file;
+            VkPipeline *pipeline;
+        } passes[2] = {{":/shaders/atrous.comp.spv", &m_atrousPipeline}, {":/shaders/compose.comp.spv", &m_composePipeline}};
+        for (const auto &p : passes) {
+            auto info = make<VkComputePipelineCreateInfo>(VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO);
+            info.stage = make<VkPipelineShaderStageCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO);
+            info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+            info.stage.module = loadShader(p.file);
+            info.stage.pName = "main";
+            info.layout = m_computeLayout;
+            check(m_df->vkCreateComputePipelines(m_dev, VK_NULL_HANDLE, 1, &info, nullptr, p.pipeline),
+                  "vkCreateComputePipelines");
+            m_df->vkDestroyShaderModule(m_dev, info.stage.module, nullptr);
+        }
     }
 
     void imageBarrier(VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to,
@@ -792,9 +1190,13 @@ private:
             m.scale(o.scale);
             VkAccelerationStructureInstanceKHR &instance = instances[i];
             instance = VkAccelerationStructureInstanceKHR{};
-            for (int row = 0; row < 3; ++row)
-                for (int column = 0; column < 4; ++column)
+            for (int row = 0; row < 3; ++row) {
+                for (int column = 0; column < 4; ++column) {
                     instance.transform.matrix[row][column] = m(row, column);
+                    m_lastTransforms[(i * 3 + static_cast<std::size_t>(row)) * 4 + static_cast<std::size_t>(column)] =
+                        m(row, column);
+                }
+            }
             instance.instanceCustomIndex = static_cast<uint32_t>(i) & 0xffffffu; // the material
             instance.mask = 0xff;
             instance.instanceShaderBindingTableRecordOffset = o.geometry == 2 ? 1u : 0u; // the hit group
@@ -813,6 +1215,13 @@ private:
         m_lightBuffers.resize(m_instanceBuffers.size());
         for (Buffer &b : m_lightBuffers)
             b = createBuffer(m_objects.size() * sizeof(Light), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
+        m_lastTransforms.assign(m_objects.size() * 12, 0.0f);
+        m_previousTransformBuffers.resize(m_instanceBuffers.size());
+        for (Buffer &b : m_previousTransformBuffers)
+            b = createBuffer(m_lastTransforms.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
+        m_frameBuffers.resize(m_instanceBuffers.size());
+        for (Buffer &b : m_frameBuffers)
+            b = createBuffer(sizeof(FrameConstants), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true);
         writeInstances(0, 0.0f);
         VkAccelerationStructureGeometryKHR geometry = instanceGeometry(0);
         // Built once here, in a command buffer that is waited for, and its scratch buffer kept for the rebuilds.
@@ -861,25 +1270,29 @@ private:
     }
 
     void createDescriptorLayout() {
-        VkDescriptorSetLayoutBinding bindings[5]{};
-        const VkShaderStageFlags stages =
+        // 0 the scene; 1-4 the history, previous and current; 5 the output; 6 materials, 7 lights, 8 the previous
+        // transforms, 9 the frame's camera and parameters; 10-13 the denoiser's albedo, normal and two work images;
+        // 14-19 the guides and the result of ray reconstruction.
+        VkDescriptorSetLayoutBinding bindings[20]{};
+        const VkShaderStageFlags rayStages =
             VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR;
-        bindings[0] = {0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, stages, nullptr};
-        bindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, stages, nullptr};
-        bindings[2] = {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, stages, nullptr};
-        bindings[3] = {3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, stages, nullptr};
-        bindings[4] = {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, stages, nullptr};
+        const VkShaderStageFlags stages = rayStages | VK_SHADER_STAGE_COMPUTE_BIT;
+        bindings[0] = {0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, rayStages, nullptr};
+        for (uint32_t i = 1; i <= 5; ++i)
+            bindings[i] = {i, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, stages, nullptr};
+        for (uint32_t i = 6; i <= 8; ++i)
+            bindings[i] = {i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, stages, nullptr};
+        bindings[9] = {9, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, stages, nullptr};
+        for (uint32_t i = 10; i <= 19; ++i)
+            bindings[i] = {i, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, stages, nullptr};
         auto layoutInfo = make<VkDescriptorSetLayoutCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
-        layoutInfo.bindingCount = 5;
+        layoutInfo.bindingCount = 20;
         layoutInfo.pBindings = bindings;
         check(m_df->vkCreateDescriptorSetLayout(m_dev, &layoutInfo, nullptr, &m_descriptorSetLayout),
               "vkCreateDescriptorSetLayout");
-        VkPushConstantRange pushConstants{stages, 0, sizeof(CameraConstants)};
         auto pipelineLayoutInfo = make<VkPipelineLayoutCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &m_descriptorSetLayout;
-        pipelineLayoutInfo.pushConstantRangeCount = 1;
-        pipelineLayoutInfo.pPushConstantRanges = &pushConstants;
         check(m_df->vkCreatePipelineLayout(m_dev, &pipelineLayoutInfo, nullptr, &m_pipelineLayout),
               "vkCreatePipelineLayout");
     }
@@ -979,12 +1392,13 @@ private:
     void createDescriptors() {
         // One set per frame in flight: each frame has its own lights buffer.
         const auto frames = static_cast<uint32_t>(m_window->concurrentFrameCount());
-        VkDescriptorPoolSize sizes[3] = {{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, frames},
-                                         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * frames},
-                                         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * frames}};
+        VkDescriptorPoolSize sizes[4] = {{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, frames},
+                                         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 15 * frames},
+                                         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 * frames},
+                                         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, frames}};
         auto poolInfo = make<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
         poolInfo.maxSets = frames;
-        poolInfo.poolSizeCount = 3;
+        poolInfo.poolSizeCount = 4;
         poolInfo.pPoolSizes = sizes;
         check(m_df->vkCreateDescriptorPool(m_dev, &poolInfo, nullptr, &m_descriptorPool), "vkCreateDescriptorPool");
         m_descriptorSets.resize(frames);
@@ -1001,25 +1415,28 @@ private:
                 VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR);
             asWrite.accelerationStructureCount = 1;
             asWrite.pAccelerationStructures = &m_tlas.handle;
-            VkDescriptorBufferInfo materialInfo{m_materials.buffer, 0, VK_WHOLE_SIZE};
-            VkDescriptorBufferInfo lightInfo{m_lightBuffers[frame].buffer, 0, VK_WHOLE_SIZE};
-            VkWriteDescriptorSet writes[3] = {make<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET),
-                                              make<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET),
-                                              make<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET)};
+            const VkDescriptorBufferInfo bufferInfos[4] = {
+                {m_materials.buffer, 0, VK_WHOLE_SIZE},
+                {m_lightBuffers[frame].buffer, 0, VK_WHOLE_SIZE},
+                {m_previousTransformBuffers[frame].buffer, 0, VK_WHOLE_SIZE},
+                {m_frameBuffers[frame].buffer, 0, VK_WHOLE_SIZE},
+            };
+            VkWriteDescriptorSet writes[5];
+            writes[0] = make<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
             writes[0].pNext = &asWrite;
             writes[0].dstSet = m_descriptorSets[frame];
             writes[0].dstBinding = 0;
             writes[0].descriptorCount = 1;
             writes[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-            writes[1].dstSet = m_descriptorSets[frame];
-            writes[1].dstBinding = 3;
-            writes[1].descriptorCount = 1;
-            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            writes[1].pBufferInfo = &materialInfo;
-            writes[2] = writes[1];
-            writes[2].dstBinding = 4;
-            writes[2].pBufferInfo = &lightInfo;
-            m_df->vkUpdateDescriptorSets(m_dev, 3, writes, 0, nullptr);
+            for (uint32_t i = 0; i < 4; ++i) {
+                writes[1 + i] = make<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
+                writes[1 + i].dstSet = m_descriptorSets[frame];
+                writes[1 + i].dstBinding = 6 + i;
+                writes[1 + i].descriptorCount = 1;
+                writes[1 + i].descriptorType = i == 3 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                writes[1 + i].pBufferInfo = &bufferInfos[i];
+            }
+            m_df->vkUpdateDescriptorSets(m_dev, 5, writes, 0, nullptr);
         }
     }
 
@@ -1030,21 +1447,23 @@ private:
         const qint64 elapsed = m_statsClock.elapsed();
         if (elapsed >= 500) {
             const double fps = m_framesThisPeriod * 1000.0 / static_cast<double>(elapsed);
-            const uint32_t samples = m_window->samples > 0 ? m_window->samples : m_autoSamples;
+            const uint32_t samples = m_dlssActive ? 1u : m_window->samples > 0 ? m_window->samples : m_autoSamples;
             const double paths = fps * width * height * samples / 1e6;
             // As many paths per pixel as keep about 90 frames per second: the cost is close to linear in them.
-            if (m_window->samples == 0) {
+            if (m_window->samples == 0 && !m_dlssActive) {
                 const double wanted = static_cast<double>(m_autoSamples) * fps / 90.0;
                 m_autoSamples = static_cast<uint32_t>(std::max(1.0, std::min(64.0, std::floor(wanted))));
             }
             char title[256];
             std::snprintf(title, sizeof title,
-                          "Nt path tracer | %s | %ux%u | %.0f fps | %u spp | %.0f Mpaths/s | %u bounces | reordering %s | %s",
-                          m_deviceName.toUtf8().constData(), width, height, fps, samples, paths, m_window->bounces,
+                          "Nt path tracer | %s | %ux%u in %dx%d | %.0f fps | %u spp | %.0f Mpaths/s | %u bounces | "
+                          "reordering %s | %s | %s",
+                          m_deviceName.toUtf8().constData(), width, height, m_window->swapChainImageSize().width(),
+                          m_window->swapChainImageSize().height(), fps, samples, paths, m_window->bounces,
                           m_hasReorder ? (reorder ? "on" : "off") : "n/a",
-                          m_window->flying ? "flying"
-                          : m_window->animating ? "moving"
-                                                : QString("%1 samples").arg(m_accumulated).toUtf8().constData());
+                          m_dlssActive ? "DLSS ray reconstruction" : m_window->denoise ? "denoise on" : "denoise off",
+                          m_stillFrames == 0 ? (m_window->flying ? "flying" : "moving")
+                                             : QString("%1 samples").arg(m_stillFrames * samples).toUtf8().constData());
             m_window->setTitle(QString::fromUtf8(title));
             std::puts(title);
             m_framesThisPeriod = 0;
@@ -1095,11 +1514,42 @@ private:
     std::vector<Buffer> m_lightBuffers;
     uint32_t m_lightCount = 0;
     uint32_t m_autoSamples = 1; // paths per pixel per frame, raised while the frame rate allows
-    Image m_accumulation;
+    Image m_accumulation[2];
+    Image m_hit[2];
+    bool m_imagesUsed[2] = {false, false};
     Image m_output;
+    QSize m_renderSize;
+    QSize m_outputSize;
+    Image m_albedo;
+    Image m_color;
+    Image m_specularAlbedo;
+    Image m_depth;
+    Image m_motion;
+    Image m_roughness;
+    Image m_reconstructed;
+    bool m_dlssActive = false;
+    uint32_t m_jitterIndex = 0;
+#ifdef HAVE_DLSS
+    bool m_ngxReady = false;
+    bool m_rrAvailable = false;
+    bool m_rrReset = true;
+    bool m_rrEvaluateFailed = false;
+    NVSDK_NGX_Parameter *m_ngxParams = nullptr;
+    NVSDK_NGX_Handle *m_rrFeature = nullptr;
+    std::wstring m_ngxDataPath;
+    std::wstring m_ngxLibraryPath;
+#endif
+    Image m_normal;
+    Image m_filter[2];
+    VkPipelineLayout m_computeLayout = VK_NULL_HANDLE;
+    VkPipeline m_atrousPipeline = VK_NULL_HANDLE;
+    VkPipeline m_composePipeline = VK_NULL_HANDLE;
+    std::vector<Buffer> m_previousTransformBuffers;
+    std::vector<float> m_lastTransforms;
+    std::vector<Buffer> m_frameBuffers;
+    FrameConstants m_lastCamera{};
     bool m_swapRedBlue = false;
-    bool m_firstFrameOfImages = true;
-    uint32_t m_accumulated = 0;
+    uint32_t m_stillFrames = 0;
     uint32_t m_frameIndex = 0;
     float m_sceneTime = 0.0f;
     float m_lastFrameTime = 0.0f;
@@ -1123,6 +1573,15 @@ int main(int argc, char *argv[]) {
     bool still = false;
     bool fly = false;
     uint32_t samples = 0;
+    uint32_t history = 48;
+    uint32_t candidates = 8;
+    bool denoise = true;
+    bool dlss = false;
+    float scale = 0.0f;
+    QString recordDir;
+    double seconds = 30.0;
+    int fps = 30;
+    int passes = 8;
     QString screenshot;
     int width = 1280, height = 720;
     for (int i = 1; i < argc; ++i) {
@@ -1138,6 +1597,24 @@ int main(int argc, char *argv[]) {
             vsync = false;
         else if (std::strcmp(argv[i], "--spp") == 0 && i + 1 < argc)
             samples = static_cast<uint32_t>(std::max(1, std::min(64, std::atoi(argv[++i]))));
+        else if (std::strcmp(argv[i], "--history") == 0 && i + 1 < argc)
+            history = static_cast<uint32_t>(std::max(0, std::min(1000, std::atoi(argv[++i]))));
+        else if (std::strcmp(argv[i], "--candidates") == 0 && i + 1 < argc)
+            candidates = static_cast<uint32_t>(std::max(1, std::min(64, std::atoi(argv[++i]))));
+        else if (std::strcmp(argv[i], "--no-denoise") == 0)
+            denoise = false;
+        else if (std::strcmp(argv[i], "--dlss") == 0)
+            dlss = true;
+        else if (std::strcmp(argv[i], "--scale") == 0 && i + 1 < argc)
+            scale = std::max(0.1f, std::min(1.0f, static_cast<float>(std::atof(argv[++i]))));
+        else if (std::strcmp(argv[i], "--record") == 0 && i + 1 < argc)
+            recordDir = QString::fromLocal8Bit(argv[++i]);
+        else if (std::strcmp(argv[i], "--seconds") == 0 && i + 1 < argc)
+            seconds = std::max(0.1, std::atof(argv[++i]));
+        else if (std::strcmp(argv[i], "--fps") == 0 && i + 1 < argc)
+            fps = std::max(1, std::min(240, std::atoi(argv[++i])));
+        else if (std::strcmp(argv[i], "--passes") == 0 && i + 1 < argc)
+            passes = std::max(1, std::min(4096, std::atoi(argv[++i])));
         else if (std::strcmp(argv[i], "--no-reorder") == 0)
             reorder = false;
         else if (std::strcmp(argv[i], "--still") == 0)
@@ -1162,6 +1639,11 @@ int main(int argc, char *argv[]) {
     Window window(frameLimit);
     window.reorder = reorder;
     window.samples = samples;
+    window.history = history;
+    window.candidates = candidates;
+    window.denoise = denoise;
+    window.dlss = dlss;
+    window.scale = scale;
     window.animating = !still;
     window.flying = fly;
     window.setVulkanInstance(&inst);
@@ -1198,6 +1680,57 @@ int main(int argc, char *argv[]) {
     window.setTitle("Nt path tracer");
     window.resize(width, height);
     window.show();
+
+    if (!recordDir.isEmpty()) {
+        // Offline: each video frame at its own time, converged over `passes` renderings, read back and saved.
+        if (window.samples == 0)
+            window.samples = 16;
+        if (window.scale <= 0.0f)
+            window.scale = 1.0f; // no upscaling in a video
+        window.animating = false;
+        window.flying = false;
+        if (!QDir().mkpath(recordDir))
+            fail(QString("cannot create %1").arg(recordDir));
+        QElapsedTimer waited;
+        waited.start();
+        while (!window.isValid() && waited.elapsed() < 10000)
+            QCoreApplication::processEvents(QEventLoop::WaitForMoreEvents);
+        if (!window.isValid())
+            fail("the window did not initialize");
+        const int total = static_cast<int>(std::lround(seconds * fps));
+        QElapsedTimer clock;
+        clock.start();
+        for (int i = 0; i < total; ++i) {
+            const float t = static_cast<float>(i) / static_cast<float>(fps);
+            window.yaw = 150.0f + 12.0f * t;
+            flyPath(t, &window.pitch, &window.distance);
+            window.fixedTime = t;
+            window.resetHistory = true;
+            QImage image;
+            for (int pass = 0; pass < passes; ++pass)
+                image = window.grab();
+            char name[64];
+            std::snprintf(name, sizeof name, "/frame_%05d.png", i);
+            if (image.isNull() || !image.save(recordDir + QString::fromLatin1(name)))
+                fail(QString("could not save frame %1").arg(i));
+            if (i % fps == 0 || i == total - 1)
+                std::printf("pathtracer: frame %d of %d (%d x %d, %u paths per pixel), %.0f s\n", i + 1, total,
+                            image.width(), image.height(), window.samples * static_cast<uint32_t>(passes),
+                            static_cast<double>(clock.elapsed()) / 1000.0);
+            QCoreApplication::processEvents();
+        }
+        const QString video = recordDir + "/flythrough.mp4";
+        const int encoded = QProcess::execute(
+            "ffmpeg", {"-y", "-loglevel", "error", "-framerate", QString::number(fps), "-i",
+                       recordDir + "/frame_%05d.png", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", video});
+        if (encoded == 0)
+            std::printf("pathtracer: wrote %s\n", video.toUtf8().constData());
+        else
+            std::printf("pathtracer: ffmpeg is not available or failed (%d); the frames are in %s\n", encoded,
+                        recordDir.toUtf8().constData());
+        return 0;
+    }
+
     const int result = app.exec();
     if (!screenshot.isEmpty() && window.isValid()) { // when the frames are up: the picture as it stands
         const QImage image = window.grab();

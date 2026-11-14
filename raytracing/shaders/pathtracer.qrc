@@ -7,5 +7,7 @@
         <file>triangles.rchit.spv</file>
         <file>sphere.rint.spv</file>
         <file>sphere.rchit.spv</file>
+        <file>atrous.comp.spv</file>
+        <file>compose.comp.spv</file>
     </qresource>
 </RCC>

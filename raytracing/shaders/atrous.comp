@@ -1,0 +1,74 @@
+// MIT License - see LICENSE
+//
+// One iteration of the à-trous wavelet filter over the irradiance (Dammertz et al.): a 5x5 B-spline kernel whose taps
+// are `step` pixels apart, each tap weighted down where it is a different object, faces another way, lies at another
+// depth or differs much in brightness. The brightness tolerance shrinks with the pixel's sample count, so a pixel that
+// has converged is left alone and the filter fades out at rest. Pixels that are not filterable (mirrors, glass,
+// lights, sky) pass through.
+#version 460
+#define COMPUTE_PASS
+#include "common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(push_constant) uniform Pass {
+    int step;   // 1, 2, 4, 8
+    int source; // 0: the accumulation, 1: filterA, 2: filterB
+    int target; // 1: filterA, 2: filterB
+} pass;
+
+vec4 load(ivec2 p) {
+    return pass.source == 0 ? imageLoad(accumulation, p) : pass.source == 1 ? imageLoad(filterA, p) : imageLoad(filterB, p);
+}
+
+void store(ivec2 p, vec4 v) {
+    if (pass.target == 1)
+        imageStore(filterA, p, v);
+    else
+        imageStore(filterB, p, v);
+}
+
+void main() {
+    const ivec2 size = imageSize(accumulation);
+    const ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, size)))
+        return;
+    const vec4 center = load(p);
+    const vec4 albedo = imageLoad(albedoImage, p);
+    if (albedo.a < 0.5) {
+        store(p, center);
+        return;
+    }
+    const vec4 normalDepth = imageLoad(normalImage, p);
+    const float instance = imageLoad(hitImage, p).w;
+    const float centerLuminance = luminance(center.rgb);
+    const float tolerance = 0.08 + 3.0 / sqrt(max(center.a, 1.0)); // in units of the centre's own brightness
+    const float kernel[5] = float[](1.0 / 16.0, 1.0 / 4.0, 3.0 / 8.0, 1.0 / 4.0, 1.0 / 16.0);
+
+    vec3 sum = center.rgb * kernel[2] * kernel[2];
+    float weightSum = kernel[2] * kernel[2];
+    for (int dy = -2; dy <= 2; ++dy) {
+        for (int dx = -2; dx <= 2; ++dx) {
+            if (dx == 0 && dy == 0)
+                continue;
+            const ivec2 q = p + ivec2(dx, dy) * pass.step;
+            if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, size)))
+                continue;
+            if (abs(imageLoad(hitImage, q).w - instance) > 0.5)
+                continue;
+            const vec4 qAlbedo = imageLoad(albedoImage, q);
+            if (qAlbedo.a < 0.5)
+                continue;
+            const vec4 qNormalDepth = imageLoad(normalImage, q);
+            const float wNormal = pow(max(dot(normalDepth.xyz, qNormalDepth.xyz), 0.0), 32.0);
+            const float wDepth = exp(-abs(normalDepth.w - qNormalDepth.w) / (0.05 * normalDepth.w * float(pass.step) + 1e-3));
+            const vec4 q4 = load(q);
+            const float wLuminance =
+                exp(-abs(luminance(q4.rgb) - centerLuminance) / (tolerance * (centerLuminance + 0.05)));
+            const float w = kernel[dx + 2] * kernel[dy + 2] * wNormal * wDepth * wLuminance;
+            sum += q4.rgb * w;
+            weightSum += w;
+        }
+    }
+    store(p, vec4(sum / weightSum, center.a));
+}

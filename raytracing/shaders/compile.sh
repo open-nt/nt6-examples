@@ -12,3 +12,5 @@ glslc --target-env=vulkan1.3 -fshader-stage=rmiss -O shadow.rmiss -o shadow.rmis
 glslc --target-env=vulkan1.3 -fshader-stage=rchit -O triangles.rchit -o triangles.rchit.spv
 glslc --target-env=vulkan1.3 -fshader-stage=rint -O sphere.rint -o sphere.rint.spv
 glslc --target-env=vulkan1.3 -fshader-stage=rchit -O sphere.rchit -o sphere.rchit.spv
+glslc --target-env=vulkan1.3 -fshader-stage=comp -O atrous.comp -o atrous.comp.spv
+glslc --target-env=vulkan1.3 -fshader-stage=comp -O compose.comp -o compose.comp.spv

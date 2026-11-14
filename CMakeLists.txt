@@ -68,6 +68,19 @@ nt_add_resources(pathtracer_resources raytracing/shaders/pathtracer.qrc)
 add_executable(pathtracer raytracing/pathtracer.cpp ${pathtracer_resources})
 target_link_libraries(pathtracer PRIVATE Nt6::Gui)
 
+# DLSS Ray Reconstruction is an opt-in build against NVIDIA's DLSS SDK, which is proprietary and not part of this
+# repository: clone https://github.com/NVIDIA/DLSS (its licence applies) and pass -DDLSS_SDK=<that checkout>. The path
+# tracer then offers --dlss and the N key on RTX GPUs; the feature library is loaded from the SDK's lib/Linux_x86_64/rel.
+set(DLSS_SDK "" CACHE PATH "A checkout of NVIDIA's DLSS SDK, to build the path tracer with DLSS Ray Reconstruction")
+if(DLSS_SDK AND EXISTS "${DLSS_SDK}/include/nvsdk_ngx_helpers_dlssd_vk.h" AND EXISTS "${DLSS_SDK}/lib/Linux_x86_64/libnvsdk_ngx.a")
+    target_compile_definitions(pathtracer PRIVATE HAVE_DLSS DLSS_SDK_LIB_DIR="${DLSS_SDK}/lib/Linux_x86_64/rel")
+    target_include_directories(pathtracer SYSTEM PRIVATE "${DLSS_SDK}/include")
+    target_link_libraries(pathtracer PRIVATE "${DLSS_SDK}/lib/Linux_x86_64/libnvsdk_ngx.a" ${CMAKE_DL_LIBS})
+    message(STATUS "pathtracer: DLSS Ray Reconstruction from ${DLSS_SDK}")
+elseif(DLSS_SDK)
+    message(WARNING "DLSS_SDK=${DLSS_SDK} lacks include/nvsdk_ngx_helpers_dlssd_vk.h or lib/Linux_x86_64/libnvsdk_ngx.a")
+endif()
+
 # Shows an SVG file in a window, or converts what it draws; see "Using Nt SVG" in the documentation.
 add_executable(svg_viewer svg/svg_viewer.cpp)
 target_link_libraries(svg_viewer PRIVATE Nt6::SvgWidgets)

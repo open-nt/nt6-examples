@@ -24,18 +24,28 @@ vec3 sampleCone(vec3 axis, float cosHalfAngle, inout uint seed) {
     return normalize(tangent * (sinTheta * cos(phi)) + bitangent * (sinTheta * sin(phi)) + axis * cosTheta);
 }
 
-// Direct light on a diffuse surface from one light chosen among the sun and the sphere lights: the light's radiance
-// times the BRDF and the cosine, over the probabilities of the choice and of the direction.
-vec3 directLight(vec3 position, vec3 normal, vec3 albedo) {
-    const uint count = camera.lightCount + 1u;
-    const uint pick = min(uint(random(payload.seed) * float(count)), count - 1u);
+// One candidate for the direct light: a direction towards the sun or a sphere light, with the unshadowed
+// contribution it would make and the probability it was generated with.
+struct LightSample {
     vec3 direction;
-    float distance, pdf;
+    float distance;
+    vec3 contribution; // BRDF times radiance times cosine, unshadowed
+    float pdf;
+};
+
+LightSample sampleLight(vec3 position, vec3 normal, vec3 albedo, inout uint seed) {
+    LightSample s;
+    s.contribution = vec3(0.0);
+    s.pdf = 1.0;
+    s.distance = 0.0;
+    s.direction = normal;
+    const uint count = camera.lightCount + 1u;
+    const uint pick = min(uint(random(seed) * float(count)), count - 1u);
     vec3 radiance;
     if (pick == 0u) { // the sun
-        direction = sampleCone(SUN_DIRECTION, SUN_COS_HALF_ANGLE, payload.seed);
-        distance = 1e4;
-        pdf = 1.0 / (6.28318530718 * (1.0 - SUN_COS_HALF_ANGLE));
+        s.direction = sampleCone(SUN_DIRECTION, SUN_COS_HALF_ANGLE, seed);
+        s.distance = 1e4;
+        s.pdf = 1.0 / (6.28318530718 * (1.0 - SUN_COS_HALF_ANGLE)) / float(count);
         radiance = SUN_RADIANCE;
     } else {
         const Light light = lights[pick - 1u];
@@ -43,23 +53,47 @@ vec3 directLight(vec3 position, vec3 normal, vec3 albedo) {
         const float d2 = dot(toCenter, toCenter);
         const float r = light.positionRadius.w;
         if (d2 <= r * r)
-            return vec3(0.0); // inside the light
+            return s; // inside the light
         const float cosHalfAngle = sqrt(1.0 - r * r / d2);
-        direction = sampleCone(normalize(toCenter), cosHalfAngle, payload.seed);
+        s.direction = sampleCone(normalize(toCenter), cosHalfAngle, seed);
         // Where the ray meets the sphere, so that the shadow ray stops short of it.
-        const float b = dot(direction, -toCenter);
+        const float b = dot(s.direction, -toCenter);
         const float c = d2 - r * r;
         const float disc = max(b * b - c, 0.0);
-        distance = max(-b - sqrt(disc), 0.0) - 1e-3;
-        pdf = 1.0 / (6.28318530718 * (1.0 - cosHalfAngle));
+        s.distance = max(-b - sqrt(disc), 0.0) - 1e-3;
+        s.pdf = 1.0 / (6.28318530718 * (1.0 - cosHalfAngle)) / float(count);
         radiance = light.emission.rgb;
     }
-    const float cosTheta = dot(direction, normal);
-    if (cosTheta <= 0.0 || distance <= 0.0)
+    const float cosTheta = dot(s.direction, normal);
+    if (cosTheta > 0.0 && s.distance > 0.0)
+        s.contribution = albedo * (1.0 / 3.14159265) * radiance * cosTheta;
+    return s;
+}
+
+// Direct light on a diffuse surface by resampled importance sampling, the first stage of ReSTIR: several candidate
+// light samples are drawn, one is kept with probability proportional to its unshadowed contribution, and only that
+// one gets a shadow ray. With many small lights this finds the ones that matter far more often than one blind pick.
+vec3 directLight(vec3 position, vec3 normal, vec3 albedo) {
+    LightSample kept;
+    kept.contribution = vec3(0.0);
+    float keptTarget = 0.0;
+    float weightSum = 0.0;
+    const uint candidates = max(camera.candidates, 1u);
+    for (uint i = 0u; i < candidates; ++i) {
+        const LightSample s = sampleLight(position, normal, albedo, payload.seed);
+        const float target = luminance(s.contribution);
+        const float weight = target / s.pdf;
+        weightSum += weight;
+        if (weight > 0.0 && random(payload.seed) * weightSum <= weight) {
+            kept = s;
+            keptTarget = target;
+        }
+    }
+    if (keptTarget <= 0.0)
         return vec3(0.0);
-    if (!visible(position, direction, distance))
+    if (!visible(position, kept.direction, kept.distance))
         return vec3(0.0);
-    return albedo * (1.0 / 3.14159265) * radiance * cosTheta * float(count) / pdf;
+    return kept.contribution * (weightSum / (keptTarget * float(candidates)));
 }
 
 void shade(vec3 position, vec3 normal) {
@@ -73,6 +107,13 @@ void shade(vec3 position, vec3 normal) {
     payload.radiance = vec3(0.0);
     payload.done = 0u;
     payload.emissive = 1u;
+    payload.instance = gl_InstanceCustomIndexEXT;
+    payload.objectPosition = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * gl_HitTEXT;
+    payload.normal = facing;
+    payload.filterable = 0u;
+    payload.origin = position;
+    payload.type = type;
+    payload.roughness = type == MATERIAL_METAL ? material.params.x : type == MATERIAL_GLASS ? 0.0 : 1.0;
     vec3 albedo = material.albedo.rgb;
 
     if (type == MATERIAL_CHECKER) {
@@ -81,7 +122,9 @@ void shade(vec3 position, vec3 normal) {
         const float fade = smoothstep(25.0, 90.0, distance(position, camera.position.xyz));
         albedo = mix(odd ? albedo : albedo * 0.35, albedo * 0.675, fade);
     }
+    payload.albedo = albedo;
     if (type == MATERIAL_DIFFUSE || type == MATERIAL_CHECKER) {
+        payload.filterable = 1u;
         payload.origin = position + facing * eps;
         payload.radiance = directLight(payload.origin, facing, albedo);
         payload.emissive = 0u; // the lights were sampled here; the next bounce must not count them again
@@ -116,6 +159,7 @@ void shade(vec3 position, vec3 normal) {
             payload.origin = position - facing * eps;
         }
     } else { // MATERIAL_EMISSIVE
+        payload.albedo = vec3(1.0);
         payload.radiance = payload.emissive != 0u ? albedo * material.params.z : vec3(0.0);
         payload.attenuation = vec3(0.0);
         payload.done = 1u;

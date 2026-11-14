@@ -1,53 +1,218 @@
 // MIT License - see LICENSE
 //
-// Ray generation: one path per pixel per frame, up to camera.bounces bounces, accumulated over the frames and tone mapped.
+// Ray generation: a few paths per pixel per frame, up to camera.bounces bounces, blended with the history of what the
+// pixel saw in the previous frames, reprojected through the motion of the camera and of the objects, then tone mapped.
 #version 460
 #extension GL_EXT_ray_tracing : require
 #include "common.glsl"
 
 layout(location = 0) rayPayloadEXT Payload payload;
 
-vec3 tracePath(inout uint seed);
+// The primary hit of a path, which the history and the denoiser are keyed by.
+struct Primary {
+    uint instance;
+    vec3 objectPosition;
+    vec3 position; // world
+    vec3 normal;
+    vec3 albedo;
+    float depth;
+    uint filterable;
+    float roughness;
+    uint type;
+    vec2 jitter;
+};
+
+vec3 tracePath(inout uint seed, out Primary primary);
+bool previousPixel(uint instance, vec3 objectPosition, out vec2 pixel, out float tolerance);
 
 void main() {
     uint seed = (gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x + gl_LaunchIDEXT.x) ^ (camera.frame * 0x9E3779B9u);
     pcg(seed);
+    Primary first;
     vec3 radiance = vec3(0.0);
-    for (uint path = 0u; path < camera.samples; ++path)
-        radiance += tracePath(seed);
-    radiance /= float(camera.samples);
-
-    // The running mean of the samples, then a filmic curve for the display.
-    const ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
-    vec3 mean = radiance;
-    if (camera.accumulated > 0u) {
-        const vec3 previous = imageLoad(accumulation, pixel).rgb;
-        mean = (previous * float(camera.accumulated) + radiance) / float(camera.accumulated + 1u);
+    bool mixed = false; // the paths of the pixel hit different things: an edge
+    for (uint path = 0u; path < camera.samples; ++path) {
+        Primary primary;
+        radiance += tracePath(seed, primary);
+        if (path == 0u)
+            first = primary;
+        else if (primary.instance != first.instance)
+            mixed = true;
     }
-    imageStore(accumulation, pixel, vec4(mean, 1.0));
-    vec3 color = mean * 0.9;
-    color = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14); // ACES fit
-    color = pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2));
-    if ((camera.flags & 1u) != 0u)
-        color = color.bgr;
-    imageStore(output_image, pixel, vec4(color, 1.0));
+    radiance /= float(camera.samples);
+    uint instance = first.instance;
+    const vec3 objectPosition = first.objectPosition;
+    const vec2 jitter = first.jitter;
+    // What a diffuse surface reflects is its albedo times the light that reaches it. The history and the denoiser
+    // work on that light alone, so the albedo, which is exact, stays sharp.
+    if (first.filterable != 0u)
+        radiance /= max(first.albedo, vec3(1e-3));
+    // An edge pixel's mean belongs to neither side: it keeps no history and leaves none, so that a bright edge does
+    // not trail behind a moving light.
+    if (mixed)
+        instance = INSTANCE_MIXED;
+
+    // The history: where the previous frame saw the same point of the same object, blended from the four pixels
+    // around that spot, each only if it saw the same thing, so that the history slides smoothly under motion.
+    vec3 mean = radiance;
+    float count = float(camera.samples);
+    const ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+    const bool still = camera.maxHistory > 1000000u; // nothing moved: every pixel maps onto itself
+    vec2 previous;
+    float tolerance;
+    if (camera.maxHistory > 0u && instance == INSTANCE_MIXED && still) {
+        // An edge pixel at rest accumulates its own samples, which smooths the edge.
+        const vec4 seen = imageLoad(previousHit, pixel);
+        if (seen.w < -1.5) {
+            const vec4 history = imageLoad(previousAccumulation, pixel);
+            mean = (history.rgb * history.a + radiance * float(camera.samples)) / (history.a + float(camera.samples));
+            count = history.a + float(camera.samples);
+        }
+    } else if (camera.maxHistory > 0u && instance != INSTANCE_MIXED &&
+               previousPixel(instance, objectPosition, previous, tolerance)) {
+        // The first path went through the pixel at `jitter`; the pixel's centre was that far from it, so that with
+        // nothing moving the history comes from this very pixel and the image does not blur.
+        const vec2 base = previous - jitter;
+        const ivec2 corner = ivec2(floor(base));
+        const vec2 f = base - vec2(corner);
+        vec3 historySum = vec3(0.0);
+        float countSum = 0.0, weightSum = 0.0;
+        for (int i = 0; i < 4; ++i) {
+            const ivec2 tap = corner + ivec2(i & 1, i >> 1);
+            if (any(lessThan(tap, ivec2(0))) || any(greaterThanEqual(tap, ivec2(gl_LaunchSizeEXT.xy))))
+                continue;
+            const float weight = ((i & 1) != 0 ? f.x : 1.0 - f.x) * ((i >> 1) != 0 ? f.y : 1.0 - f.y);
+            if (weight < 1e-4)
+                continue;
+            // The instance is kept as a float (-1 for the sky, -2 for an edge): the bit patterns of small integers
+            // are denormals, which image stores flush to zero. The point must match to within a few pixels' footprint.
+            const vec4 seen = imageLoad(previousHit, tap);
+            const bool same = instance == INSTANCE_SKY ? seen.w < -0.5 && seen.w > -1.5
+                                                       : abs(seen.w - float(instance)) < 0.5 &&
+                                                             distance(seen.xyz, objectPosition) < tolerance;
+            if (!same)
+                continue;
+            const vec4 history = imageLoad(previousAccumulation, tap);
+            historySum += history.rgb * weight;
+            countSum += history.a * weight;
+            weightSum += weight;
+        }
+        if (weightSum > 0.0) {
+            // Mirrors, glass and lights show what lies elsewhere, which moves with the camera even though the
+            // surface reprojects exactly: while anything moves they keep only a few frames, or they would smear.
+            const float maxHistory = first.filterable != 0u || still ? float(camera.maxHistory)
+                                                                     : min(float(camera.maxHistory), 6.0);
+            const float kept = min(countSum / weightSum, maxHistory);
+            const vec3 history = historySum / weightSum;
+            mean = (history * kept + radiance * float(camera.samples)) / (kept + float(camera.samples));
+            count = kept + float(camera.samples);
+        }
+    }
+    imageStore(accumulation, pixel, vec4(mean, count));
+    imageStore(hitImage, pixel,
+               vec4(objectPosition, instance == INSTANCE_SKY ? -1.0 : instance == INSTANCE_MIXED ? -2.0 : float(instance)));
+    imageStore(albedoImage, pixel, vec4(first.filterable != 0u ? first.albedo : vec3(1.0), float(first.filterable)));
+    imageStore(normalImage, pixel, vec4(first.normal, first.depth));
+
+    if (camera.dlss != 0u) {
+        // The guides of DLSS Ray Reconstruction. The colour is the plain radiance; the albedos are what the surface
+        // reflects diffusely and specularly (a flat 0.5 and 0 for the sky, as recommended); the depth is linear, along
+        // the view axis; the motion vector points from this pixel's centre to where it was in the previous frame.
+        imageStore(colorImage, pixel, vec4(radiance * (first.filterable != 0u ? first.albedo : vec3(1.0)), 1.0));
+        const bool sky = first.instance == INSTANCE_SKY;
+        vec3 specular = vec3(0.02);
+        if (first.type == MATERIAL_METAL)
+            specular = first.albedo;
+        else if (first.type == MATERIAL_GLASS)
+            specular = vec3(0.04);
+        else if (sky || first.type == MATERIAL_EMISSIVE)
+            specular = vec3(0.0);
+        imageStore(specularAlbedoImage, pixel, vec4(specular, 1.0));
+        if (sky)
+            imageStore(albedoImage, pixel, vec4(0.5, 0.5, 0.5, 0.0));
+        imageStore(depthImage, pixel,
+                   vec4(sky ? 1e4 : max(dot(first.position - camera.position.xyz, camera.forward.xyz), 1e-3)));
+        vec2 motion = vec2(0.0);
+        vec2 previousSample;
+        float unused;
+        if (previousPixel(first.instance, first.objectPosition, previousSample, unused))
+            motion = previousSample - jitter - vec2(pixel);
+        imageStore(motionImage, pixel, vec4(motion, 0.0, 0.0));
+        imageStore(roughnessImage, pixel, vec4(sky ? 0.0 : first.roughness));
+    }
+    // The denoiser and the compose pass take it from here (atrous.comp, compose.comp), or ray reconstruction.
 }
 
-vec3 tracePath(inout uint seed) {
-    // A jittered ray through the pixel.
-    const vec2 jitter = vec2(random(seed), random(seed));
+// Where the previous frame's camera saw the point: its world position then, from the instance's previous transform,
+// projected with the previous camera. False when it was off screen. `tolerance` is how far apart, in the object's
+// own units, two points may be and still count as the same: three pixels' footprint at that distance.
+bool previousPixel(uint instance, vec3 objectPosition, out vec2 pixel, out float tolerance) {
+    vec3 direction;
+    const float tanHalf = camera.previousPosition.w, aspect = camera.previousForward.w;
+    tolerance = 0.0;
+    if (instance == INSTANCE_SKY) {
+        direction = objectPosition; // the ray direction, which the sky does not move with
+    } else {
+        const vec4 row0 = previousTransforms[instance * 3u];
+        const vec4 row1 = previousTransforms[instance * 3u + 1u];
+        const vec4 row2 = previousTransforms[instance * 3u + 2u];
+        const vec4 p = vec4(objectPosition, 1.0);
+        const vec3 world = vec3(dot(row0, p), dot(row1, p), dot(row2, p));
+        direction = world - camera.previousPosition.xyz;
+        const float depth = dot(direction, camera.previousForward.xyz);
+        if (depth <= 1e-4)
+            return false;
+        const float scale = length(vec3(row0.x, row1.x, row2.x)); // object units to world units
+        tolerance = 3.0 * depth * 2.0 * tanHalf / float(gl_LaunchSizeEXT.y) / max(scale, 1e-6);
+    }
+    const float z = dot(direction, camera.previousForward.xyz);
+    if (z <= 1e-6)
+        return false;
+    const float x = dot(direction, camera.previousRight.xyz) / z / (tanHalf * aspect);
+    const float y = -dot(direction, camera.previousUp.xyz) / z / tanHalf;
+    const vec2 uv = vec2(x, y) * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0))))
+        return false;
+    pixel = uv * vec2(gl_LaunchSizeEXT.xy);
+    return true;
+}
+
+vec3 tracePath(inout uint seed, out Primary primary) {
+    // A jittered ray through the pixel; with ray reconstruction the whole frame shares one offset, which it is told.
+    const vec2 jitter = camera.dlss != 0u ? camera.jitter.xy : vec2(random(seed), random(seed));
+    primary.jitter = jitter;
     const vec2 uv = (vec2(gl_LaunchIDEXT.xy) + jitter) / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
     vec3 origin = camera.position.xyz;
     vec3 direction = normalize(camera.forward.xyz + camera.right.xyz * (uv.x * camera.forward.w * camera.position.w) -
                                camera.up.xyz * (uv.y * camera.position.w));
     vec3 radiance = vec3(0.0);
     vec3 throughput = vec3(1.0);
+    primary.instance = INSTANCE_SKY;
+    primary.objectPosition = direction;
+    primary.position = origin + direction * 1e4;
+    primary.normal = -direction;
+    primary.albedo = vec3(1.0);
+    primary.depth = 1e4;
+    primary.filterable = 0u;
+    primary.roughness = 0.0;
+    primary.type = 0xffffffffu;
     for (uint bounce = 0u; bounce < camera.bounces; ++bounce) {
         payload.seed = seed;
         if (bounce == 0u)
             payload.emissive = 1u;
         traceRayEXT(scene, gl_RayFlagsNoneEXT, 0xff, 0, 0, 0, origin, 1e-4, direction, 1e4, 0);
         seed = payload.seed;
+        if (bounce == 0u) {
+            primary.instance = payload.instance;
+            primary.objectPosition = payload.objectPosition;
+            primary.position = payload.origin;
+            primary.normal = payload.normal;
+            primary.albedo = payload.albedo;
+            primary.depth = distance(payload.origin, camera.position.xyz);
+            primary.filterable = payload.filterable;
+            primary.roughness = payload.roughness;
+            primary.type = payload.type;
+        }
         radiance += throughput * payload.radiance;
         if (payload.done != 0u)
             break;

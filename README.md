@@ -81,11 +81,18 @@ The pixel art is text, in `platformer/sprites.h`; `sprite_sheet` draws all of it
 <p align="center"><img src="raytracing/pathtracer.png" alt="The path tracer: spheres of glass, metal and color on a checkered floor" width="640"></p>
 
 `raytracing/` renders a scene of spheres and boxes with a progressive path tracer that runs on the ray tracing
-pipeline of Vulkan (`VK_KHR_ray_tracing_pipeline`) in a `QVulkanWindow`: several paths per pixel per frame, as many
-as keep about 90 frames per second, up to 16 bounces, the sun and the lamps sampled directly with shadow rays, and the
-frames accumulated while the scene stands still. Run `build/pathtracer`, or `build/pathtracer --fly` to let the camera
+pipeline of Vulkan (`VK_KHR_ray_tracing_pipeline`) in a `QVulkanWindow`, built the way an RTX game pipeline is:
+a few paths per pixel per frame, as many as keep about 90 frames per second, up to 16 bounces; the direct light
+chosen by resampled importance sampling (the first stage of ReSTIR: eight candidate lights per hit, one shadow ray);
+each pixel's history reprojected through the motion of the camera and of the objects; and an à-trous wavelet
+denoiser over the light alone, separated from the surface colour and guided by instance, normal, depth and sample
+count, so that the picture is smooth while everything moves and converges exactly, unfiltered, when it rests. Mirrors,
+glass and lights are not filtered, so they keep some grain in motion. Run `build/pathtracer`, or `build/pathtracer --fly` to let the camera
 circle the scene; `pathtracer --devices` lists the GPUs and `--device N` picks one (by default the first discrete GPU
-with ray tracing), `--spp N` fixes the paths per pixel, `--vsync` holds the frames to the display's rate, `--still`
+with ray tracing), `--spp N` fixes the paths per pixel, `--history N` the frames a moving pixel remembers (48 by default),
+`--candidates N` the light candidates per hit, `--no-denoise` skips the filter, `--scale F` the rendered size over
+the window's (by default the rendering stays near 1080p and is upscaled to the window), `--vsync` holds the frames to
+the display's rate, `--still`
 starts with the scene at rest so the image converges, `--screenshot out.png` saves the picture when `--frames N` are
 done, and `--validate` enables the validation layer. It needs a GPU with ray tracing (NVIDIA RTX,
 AMD RDNA 2 or later, Intel Arc), or Mesa's `lavapipe` for a slow software run, and an Nt built with the Vulkan
@@ -107,6 +114,11 @@ Beyond the core extensions it shows what an RTX GPU adds:
 The window title shows the GPU, the resolution, the frame rate, the paths per pixel and per second, the bounces, the
 reordering state, and the sample count once the image converges.
 
+A fly-through video is rendered offline, one frame at a time, with `pathtracer --record out --seconds 30`: the scene
+and the camera step by the video's frame time, each frame converges over 128 paths per pixel (`--passes` times
+`--spp`) before it is saved as a PNG, and ffmpeg, if installed, encodes `out/flythrough.mp4` at `--fps` (30). Use
+`--size 960x540` for 1080p on a HiDPI screen, `--no-denoise` for pure path tracing.
+
 | Action                | Control                      |
 |-----------------------|------------------------------|
 | Orbit the camera      | Drag with the left button    |
@@ -114,6 +126,7 @@ reordering state, and the sample count once the image converges.
 | Pause / resume motion | Space (paused, the image converges) |
 | Fly around            | F, or start with `--fly`     |
 | Reordering on/off     | R                            |
+| Denoiser on/off       | D                            |
 | More / fewer bounces  | + / -                        |
 | Screenshot (PNG)      | S                            |
 | Quit                  | Q or Esc                     |

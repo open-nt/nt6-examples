@@ -18,4 +18,12 @@ void main() {
     payload.radiance = sky;
     payload.attenuation = vec3(0.0);
     payload.done = 1u;
+    payload.instance = INSTANCE_SKY;
+    payload.objectPosition = direction;
+    payload.normal = -direction;
+    payload.albedo = vec3(1.0);
+    payload.filterable = 0u;
+    payload.origin = gl_WorldRayOriginEXT + direction * 1e4;
+    payload.type = 0xffffffffu;
+    payload.roughness = 0.0;
 }
