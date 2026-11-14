@@ -58,6 +58,8 @@ Without a display, run the graphical examples with `-platform offscreen`.
 
 ## Mochimaru no Daibouken
 
+<p align="center"><img src="platformer/mochimaru.png" alt="Mochimaru no Daibouken: the bunny in 1-2 Bamboo Grove, with a pipe, coins, bricks and a few enemies" width="640"></p>
+
 `platformer/` is a small, cute platform game. Run `build/mochimaru`, or `build/mochimaru song.mid` (several
 files, or a directory of them, work too) to play with your own MIDI soundtrack. The sound effects and the
 soundtrack come from the FM synthesizer of Nt FM; the controls come from Nt Gamepad.
@@ -79,6 +81,7 @@ The pixel art is text, in `platformer/sprites.h`; `sprite_sheet` draws all of it
 ## Path tracer
 
 <p align="center"><img src="raytracing/pathtracer.png" alt="The path tracer: spheres of glass, metal and color on a checkered floor" width="640"></p>
+<p align="center"><em>Real-time ray tracing with <code>pathtracer</code>: an Nt-only feature, with no Qt 6 counterpart in <code>qt/</code>.</em></p>
 
 `raytracing/` renders a scene of spheres and boxes with a progressive path tracer that runs on the ray tracing
 pipeline of Vulkan (`VK_KHR_ray_tracing_pipeline`) in a `QVulkanWindow`, built the way an RTX game pipeline is:
@@ -90,7 +93,8 @@ count, so that the picture is smooth while everything moves and converges exactl
 glass and lights are not filtered, so they keep some grain in motion. Run `build/pathtracer`, or `build/pathtracer --fly` to let the camera
 circle the scene; `pathtracer --devices` lists the GPUs and `--device N` picks one (by default the first discrete GPU
 with ray tracing), `--spp N` fixes the paths per pixel, `--history N` the frames a moving pixel remembers (48 by default),
-`--candidates N` the light candidates per hit, `--no-denoise` skips the filter, `--scale F` the rendered size over
+`--candidates N` the light candidates per hit, `--no-denoise` skips the filter, `--dlss` uses DLSS Ray Reconstruction
+(see below), `--scale F` the rendered size over
 the window's (by default the rendering stays near 1080p and is upscaled to the window), `--vsync` holds the frames to
 the display's rate, `--still`
 starts with the scene at rest so the image converges, `--screenshot out.png` saves the picture when `--frames N` are
@@ -108,11 +112,16 @@ Beyond the core extensions it shows what an RTX GPU adds:
   the triangle it hit from the acceleration structure, so the meshes bind no vertex buffers.
 - **Procedural geometry**: the spheres are analytic, intersected by an intersection shader, and perfectly round at any
   distance; the boxes and the floor are triangles.
+- **DLSS Ray Reconstruction** (opt-in, NVIDIA RTX): one path per pixel, with its albedo, normal, roughness, depth and
+  motion vector guides and a sub-pixel jitter, is denoised and upscaled to the window by NVIDIA's DLSS instead of by
+  the history and the filter. The DLSS SDK is proprietary and not part of this repository: clone
+  [NVIDIA/DLSS](https://github.com/NVIDIA/DLSS) (its licence applies) and configure with `-DDLSS_SDK=<that checkout>`.
+  Then `--dlss`, or the N key, turns it on and off.
 - **A top level rebuilt every frame** while the scene moves, and shadow rays nested in the hit shaders for the
   direct light.
 
 The window title shows the GPU, the resolution, the frame rate, the paths per pixel and per second, the bounces, the
-reordering state, and the sample count once the image converges.
+reordering state, whether the denoiser or DLSS Ray Reconstruction is on, and the sample count once the image converges.
 
 A fly-through video is rendered offline, one frame at a time, with `pathtracer --record out --seconds 30`: the scene
 and the camera step by the video's frame time, each frame converges over 128 paths per pixel (`--passes` times
@@ -127,6 +136,7 @@ and the camera step by the video's frame time, each frame converges over 128 pat
 | Fly around            | F, or start with `--fly`     |
 | Reordering on/off     | R                            |
 | Denoiser on/off       | D                            |
+| DLSS Ray Reconstruction on/off | N (when built with the DLSS SDK) |
 | More / fewer bounces  | + / -                        |
 | Screenshot (PNG)      | S                            |
 | Quit                  | Q or Esc                     |
