@@ -123,6 +123,16 @@ Beyond the core extensions it shows what an RTX GPU adds:
 The window title shows the GPU, the resolution, the frame rate, the paths per pixel and per second, the bounces, the
 reordering state, whether the denoiser or DLSS Ray Reconstruction is on, and the sample count once the image converges.
 
+**DLSS Ray Reconstruction** is an opt-in build for NVIDIA RTX GPUs. NVIDIA's DLSS SDK is proprietary and is not
+part of this repository: clone https://github.com/NVIDIA/DLSS (its licence applies, and its libraries must not be
+redistributed) and configure with `cmake -S . -B build -DDLSS_SDK=<that checkout>`. Then `pathtracer --dlss`, or the
+N key, hands each frame to DLSS: one path per pixel at the size DLSS asks for (its Balanced mode), with its guides
+(diffuse and specular albedo, normals, roughness, linear depth, motion vectors) and a Halton sub-pixel jitter, and DLSS
+denoises and upscales to the window in place of the history and the à-trous filter. `--dlss-mode` picks
+`performance`, `balanced` (the default), `quality` or `dlaa` (native resolution, denoising only), and `--spp N` gives
+DLSS several paths per pixel for a cleaner input. Without the SDK, or on a GPU
+without it, the option is ignored.
+
 A fly-through video is rendered offline, one frame at a time, with `pathtracer --record out --seconds 30`: the scene
 and the camera step by the video's frame time, each frame converges over 128 paths per pixel (`--passes` times
 `--spp`) before it is saved as a PNG, and ffmpeg, if installed, encodes `out/flythrough.mp4` at `--fps` (30). Use
@@ -136,6 +146,7 @@ and the camera step by the video's frame time, each frame converges over 128 pat
 | Fly around            | F, or start with `--fly`     |
 | Reordering on/off     | R                            |
 | Denoiser on/off       | D                            |
+| DLSS ray reconstruction | N (SDK build, RTX GPU)     |
 | DLSS Ray Reconstruction on/off | N (when built with the DLSS SDK) |
 | More / fewer bounces  | + / -                        |
 | Screenshot (PNG)      | S                            |

@@ -10,7 +10,8 @@
 // intersection shader. It runs on any GPU with VK_KHR_ray_tracing_pipeline, and on Mesa's lavapipe in software.
 //
 //   pathtracer [--device INDEX] [--devices] [--frames N] [--vsync] [--spp N] [--history N] [--candidates N]
-//              [--scale F] [--no-denoise] [--no-reorder] [--dlss] [--still] [--fly] [--validate] [--size WxH]
+//              [--scale F] [--no-denoise] [--no-reorder] [--dlss] [--dlss-mode performance|balanced|quality|dlaa]
+//              [--still] [--fly] [--validate] [--size WxH]
 //              [--screenshot FILE.png] [--record DIR] [--seconds S] [--fps N] [--passes N]
 //
 // --dlss (or the N key) hands the frame to DLSS Ray Reconstruction instead of the history and the filter, on an
@@ -49,8 +50,8 @@
 #ifdef HAVE_DLSS
 // NVIDIA's DLSS SDK (proprietary): built in with -DDLSS_SDK=<checkout of github.com/NVIDIA/DLSS>.
 #include <nvsdk_ngx_helpers.h>
+#include <nvsdk_ngx_helpers_vk.h> // before the ray reconstruction helpers, which use its types
 #include <nvsdk_ngx_helpers_dlssd_vk.h>
-#include <nvsdk_ngx_helpers_vk.h>
 #endif
 
 namespace {
@@ -174,6 +175,7 @@ public:
     uint32_t history = 48; // previous samples a pixel keeps while things move; at rest it keeps them all
     bool denoise = true;
     bool dlss = false; // DLSS Ray Reconstruction, where the build and the GPU have it
+    int dlssMode = 1;  // 0 performance, 1 balanced, 2 quality, 3 DLAA (native resolution, denoise only)
     uint32_t candidates = 8; // light candidates resampled per diffuse hit
     float scale = 0.0f; // the rendered size over the window's; 0 keeps the rendering near 1080p and upscales
     float fixedTime = -1.0f; // recording: the scene's time, instead of the clock
@@ -282,6 +284,23 @@ public:
         m_hasReorder = extensions.contains(kReorderExtension);
         if (m_hasReorder)
             wanted.append(kReorderExtension);
+#ifdef HAVE_DLSS
+        // NGX runs its networks through extensions of NVIDIA's driver (binary import, image view handles, push
+        // descriptors); without them on the device, ray reconstruction reports itself unavailable.
+        if (m_window->dlss) {
+            unsigned int instanceCount = 0, deviceCount = 0;
+            const char **instanceExts = nullptr, **deviceExts = nullptr;
+            if (NVSDK_NGX_SUCCEED(
+                    NVSDK_NGX_VULKAN_RequiredExtensions(&instanceCount, &instanceExts, &deviceCount, &deviceExts))) {
+                for (unsigned int i = 0; i < deviceCount; ++i) {
+                    if (extensions.contains(deviceExts[i]) && !wanted.contains(deviceExts[i]))
+                        wanted.append(deviceExts[i]);
+                    else if (!extensions.contains(deviceExts[i]))
+                        std::printf("pathtracer: the device lacks %s, which DLSS needs\n", deviceExts[i]);
+                }
+            }
+        }
+#endif
         else
             std::puts("pathtracer: no VK_NV_ray_tracing_invocation_reorder on this device; R does nothing");
         m_window->setDeviceExtensions(wanted);
@@ -372,9 +391,10 @@ public:
             float sharpness = 0.0f;
             const NVSDK_NGX_Result result = NGX_DLSS_GET_OPTIMAL_SETTINGS(
                 m_ngxParams, static_cast<unsigned int>(windowSize.width()), static_cast<unsigned int>(windowSize.height()),
-                NVSDK_NGX_PerfQuality_Value_Balanced, &optimalWidth, &optimalHeight, &maxWidth, &maxHeight, &minWidth,
-                &minHeight, &sharpness);
-            if (NVSDK_NGX_SUCCEED(result) && optimalWidth > 0 && optimalHeight > 0)
+                dlssQuality(), &optimalWidth, &optimalHeight, &maxWidth, &maxHeight, &minWidth, &minHeight, &sharpness);
+            if (m_window->dlssMode == 3)
+                m_renderSize = windowSize; // DLAA: no upscaling
+            else if (NVSDK_NGX_SUCCEED(result) && optimalWidth > 0 && optimalHeight > 0)
                 m_renderSize = QSize(static_cast<int>(optimalWidth), static_cast<int>(optimalHeight));
             else
                 m_renderSize = QSize(std::max(64, windowSize.width() * 58 / 100), std::max(32, windowSize.height() * 58 / 100));
@@ -575,7 +595,7 @@ public:
         std::memcpy(constants.previousRight, m_lastCamera.right, 4 * sizeof(float));
         std::memcpy(constants.previousUp, m_lastCamera.up, 4 * sizeof(float));
         constants.frame = m_frameIndex++;
-        constants.samples = dlss ? 1u : m_window->samples > 0 ? m_window->samples : m_autoSamples;
+        constants.samples = dlss ? std::max(1u, m_window->samples) : m_window->samples > 0 ? m_window->samples : m_autoSamples;
         constants.bounces = m_window->bounces;
         constants.flags = m_swapRedBlue ? 1u : 0u;
         constants.lightCount = m_lightCount;
@@ -701,6 +721,19 @@ private:
             std::printf("pathtracer: NGX feature init result 0x%x\n", static_cast<unsigned>(initResult));
     }
 
+    NVSDK_NGX_PerfQuality_Value dlssQuality() const {
+        switch (m_window->dlssMode) {
+        case 0:
+            return NVSDK_NGX_PerfQuality_Value_MaxPerf;
+        case 2:
+            return NVSDK_NGX_PerfQuality_Value_MaxQuality;
+        case 3:
+            return NVSDK_NGX_PerfQuality_Value_DLAA;
+        default:
+            return NVSDK_NGX_PerfQuality_Value_Balanced;
+        }
+    }
+
     void shutdownNgx() {
         if (m_ngxParams)
             NVSDK_NGX_VULKAN_DestroyParameters(m_ngxParams);
@@ -729,7 +762,7 @@ private:
         params.InHeight = static_cast<unsigned int>(renderSize.height());
         params.InTargetWidth = static_cast<unsigned int>(windowSize.width());
         params.InTargetHeight = static_cast<unsigned int>(windowSize.height());
-        params.InPerfQualityValue = NVSDK_NGX_PerfQuality_Value_Balanced;
+        params.InPerfQualityValue = dlssQuality();
         params.InFeatureCreateFlags = NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_MVLowRes;
         NVSDK_NGX_Result result = NVSDK_NGX_Result_Fail;
         submitAndWait([&](VkCommandBuffer cmd) {
@@ -754,7 +787,8 @@ private:
         m_rrFeature = nullptr;
     }
 
-    static NVSDK_NGX_Resource_VK ngxResource(const Image &image, VkFormat format, const QSize &size, bool readWrite) {
+    template <typename ImageT> // Image is declared further down
+    static NVSDK_NGX_Resource_VK ngxResource(const ImageT &image, VkFormat format, const QSize &size, bool readWrite) {
         return NVSDK_NGX_Create_ImageView_Resource_VK(image.view, image.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
                                                      format, static_cast<unsigned int>(size.width()),
                                                      static_cast<unsigned int>(size.height()), readWrite);
@@ -1447,12 +1481,14 @@ private:
         const qint64 elapsed = m_statsClock.elapsed();
         if (elapsed >= 500) {
             const double fps = m_framesThisPeriod * 1000.0 / static_cast<double>(elapsed);
-            const uint32_t samples = m_dlssActive ? 1u : m_window->samples > 0 ? m_window->samples : m_autoSamples;
+            const uint32_t samples =
+                m_dlssActive ? std::max(1u, m_window->samples) : m_window->samples > 0 ? m_window->samples : m_autoSamples;
             const double paths = fps * width * height * samples / 1e6;
             // As many paths per pixel as keep about 90 frames per second: the cost is close to linear in them.
             if (m_window->samples == 0 && !m_dlssActive) {
+                // Rounded, not floored: from 1 path per pixel at 175 fps the next step is 2, not 1 forever.
                 const double wanted = static_cast<double>(m_autoSamples) * fps / 90.0;
-                m_autoSamples = static_cast<uint32_t>(std::max(1.0, std::min(64.0, std::floor(wanted))));
+                m_autoSamples = static_cast<uint32_t>(std::max(1.0, std::min(64.0, std::round(wanted))));
             }
             char title[256];
             std::snprintf(title, sizeof title,
@@ -1577,6 +1613,7 @@ int main(int argc, char *argv[]) {
     uint32_t candidates = 8;
     bool denoise = true;
     bool dlss = false;
+    int dlssMode = 1;
     float scale = 0.0f;
     QString recordDir;
     double seconds = 30.0;
@@ -1605,6 +1642,10 @@ int main(int argc, char *argv[]) {
             denoise = false;
         else if (std::strcmp(argv[i], "--dlss") == 0)
             dlss = true;
+        else if (std::strcmp(argv[i], "--dlss-mode") == 0 && i + 1 < argc) {
+            const char *mode = argv[++i];
+            dlssMode = !std::strcmp(mode, "performance") ? 0 : !std::strcmp(mode, "quality") ? 2 : !std::strcmp(mode, "dlaa") ? 3 : 1;
+        }
         else if (std::strcmp(argv[i], "--scale") == 0 && i + 1 < argc)
             scale = std::max(0.1f, std::min(1.0f, static_cast<float>(std::atof(argv[++i]))));
         else if (std::strcmp(argv[i], "--record") == 0 && i + 1 < argc)
@@ -1633,6 +1674,18 @@ int main(int argc, char *argv[]) {
     inst.setApiVersion(QVersionNumber(1, 3));
     if (validate)
         inst.setLayers({"VK_LAYER_KHRONOS_validation"});
+#ifdef HAVE_DLSS
+    if (dlss) {
+        unsigned int instanceCount = 0, deviceCount = 0;
+        const char **instanceExts = nullptr, **deviceExts = nullptr;
+        if (NVSDK_NGX_SUCCEED(NVSDK_NGX_VULKAN_RequiredExtensions(&instanceCount, &instanceExts, &deviceCount, &deviceExts))) {
+            QByteArrayList wanted;
+            for (unsigned int i = 0; i < instanceCount; ++i)
+                wanted.append(instanceExts[i]);
+            inst.setExtensions(wanted);
+        }
+    }
+#endif
     if (!inst.create())
         fail(QString("no Vulkan (error %1)").arg(static_cast<int>(inst.errorCode())));
 
@@ -1643,6 +1696,7 @@ int main(int argc, char *argv[]) {
     window.candidates = candidates;
     window.denoise = denoise;
     window.dlss = dlss;
+    window.dlssMode = dlssMode;
     window.scale = scale;
     window.animating = !still;
     window.flying = fly;
