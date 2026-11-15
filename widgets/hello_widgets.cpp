@@ -42,7 +42,6 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-//! [form]
 // A label and a widget side by side, with the labels of all rows of a page the same width.
 static QHBoxLayout *row(const QString &text, QWidget *widget, QWidget *page, int labelWidth = 90) {
     auto *label = new QLabel(text, page);
@@ -563,4 +562,3 @@ int main(int argc, char *argv[]) {
     window.show();
     return app.exec();
 }
-//! [form]

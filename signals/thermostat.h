@@ -3,7 +3,6 @@
 
 #include <QObject>
 
-//! [class]
 // A class with signals and slots derives from QObject and starts with Q_OBJECT. ntmoc reads the
 // header and writes the code behind the signals; nt_enable_automoc() in CMake runs it.
 class Thermostat : public QObject {
@@ -33,9 +32,7 @@ signals:
 private:
     double m_temperature = 20.0;
 };
-//! [class]
 
-//! [receiver]
 class Display : public QObject {
     Q_OBJECT
 public:
@@ -44,4 +41,3 @@ public:
 public slots:
     void show(double celsius) { text = QString::number(celsius) + " C"; }
 };
-//! [receiver]

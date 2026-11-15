@@ -10,7 +10,6 @@
 
 #include <cstdio>
 
-//! [adaptor]
 class Clock : public QObject {
     Q_OBJECT
 public:
@@ -43,9 +42,7 @@ private:
     Clock *m_clock;
     int m_volume = 5;
 };
-//! [adaptor]
 
-//! [proxy]
 class ClockInterface : public QDBusAbstractInterface {
     Q_OBJECT
 public:
@@ -60,10 +57,8 @@ public:
 signals:
     void alarm(const QString &message); // emitted when the remote clock emits it
 };
-//! [proxy]
 
 static int server() {
-    //! [server]
     QDBusConnection bus = QDBusConnection::sessionBus();
     if (!bus.isConnected()) {
         std::fprintf(stderr, "No session bus: %s\n", qPrintable(bus.lastError().message()));
@@ -76,13 +71,11 @@ static int server() {
         std::fprintf(stderr, "org.example.Clock is taken: %s\n", qPrintable(bus.lastError().message()));
         return 1;
     }
-    //! [server]
     std::printf("Serving org.example.Clock as %s\n", qPrintable(bus.baseService()));
     return QCoreApplication::exec();
 }
 
 static int client() {
-    //! [client]
     QDBusConnection bus = QDBusConnection::sessionBus();
     QDBusInterface clock("org.example.Clock", "/clock", "org.example.Clock", bus);
     QDBusReply<QString> now = clock.call("Now");
@@ -91,7 +84,6 @@ static int client() {
         return 1;
     }
     std::printf("It is %s, volume %d\n", qPrintable(now.value()), clock.property("volume").toInt());
-    //! [client]
 
     ClockInterface proxy(bus);
     QObject::connect(&proxy, &ClockInterface::alarm, [](const QString &message) {

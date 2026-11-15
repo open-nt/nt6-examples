@@ -10,8 +10,10 @@
 [MIT License](LICENSE)
 
 C++ example applications for Nt 6, a small MIT-licensed, Qt 6 compatible implementation of a subset of the
-Qt 6 API: widgets, signals and slots, `moc`, SVG, WebSockets, an HTTP server, D-Bus and serial port.
-The sources are the ones in the `examples/` directory of Nt, set up to build with CMake against an installed Nt.
+Qt 6 API: widgets, signals and slots, `moc`, SVG, charts, OpenGL and Vulkan, QML and scripting, SQL, WebSockets, an
+HTTP server, D-Bus, serial port, GPIO, gamepads, glTF, multimedia and FM sound, a platform game and a path tracer,
+set up to build with CMake against an installed Nt. The guides at <https://open-nt.github.io/Nt6/> walk through
+most of them.
 
 ## Building
 
@@ -44,17 +46,45 @@ elsewhere, pass `-DCMAKE_PREFIX_PATH=<prefix>`.
 | `signals/`    | `signals`                                    | The signal and slot patterns of the "Signals and Slots" guide |
 | `moc/`        | `moc_example`                                | `Q_OBJECT` classes processed by `ntmoc`, as with automoc      |
 | `test/`       | `tst_counter`                                | A test written with Nt Test                                   |
-| `gui/`        | `hello_window`                               | A window painted with `QPainter`                              |
+| `gui/`        | `hello_window`, `painting`, `painter_bench`  | A window painted with `QPainter`, the scenes of the painting guide, a benchmark |
 | `widgets/`    | `hello_widgets`, `gallery`, `render_widgets` | A form, a tour of the widgets, and widgets rendered to PNG    |
 | `svg/`        | `svg_viewer`                                 | Showing and converting an SVG file                            |
+| `opengl/`     | `glwindow`                                   | A window rendered with OpenGL and `QPainter`                  |
+| `vulkan/`     | `rtriangle`                                  | A triangle traced with the Vulkan ray tracing pipeline        |
+| `charts/`     | `chart_dashboard`, `render_charts`           | A live dashboard of charts, and the pictures of the charts guide |
+| `qml/`        | `hello_qml`, `js_scripting`                  | A QML document with a C++ type, and scripting with `QJSEngine` |
+| `sql/`        | `contacts`                                   | An address book in an SQLite database                         |
 | `serialport/` | `serialterm`                                 | A serial terminal                                             |
 | `websockets/` | `websocket_echo`                             | A WebSocket echo server and client                            |
 | `httpserver/` | `hello_server`                               | A small web service                                           |
 | `dbus/`       | `dbus_clock`                                 | A clock on the D-Bus session bus                              |
+| `gpio/`       | `ptt`                                        | A push-to-talk switch on a GPIO line                          |
+| `gamepad/`    | `gamepadinfo`                                | What the gamepads do                                          |
+| `gltf/`       | `gltfinfo`                                   | What a glTF file holds                                        |
+| `multimedia/` | `audiodevices`, `audioplayer`, `decoder`, `recorder`, `camera`, `viewfinder` | Audio devices and playback, decoding, recording, the camera |
+| `fm/`         | `fmplay`, `fmqml`                            | FM sound effects and chip music, from C++ and from QML        |
+| `zephyr/`     | `hello`, `qemu`                              | Nt Core and Nt Network on Zephyr, built with west (see below) |
 | `platformer/` | `mochimaru`, `sprite_sheet`                  | A platform game: Nt Gamepad, Nt FM sound, a MIDI soundtrack and an OpenGL window |
 | `raytracing/` | `pathtracer`                                 | A path tracer on the Vulkan ray tracing pipeline in a `QVulkanWindow`, with the RTX extensions |
 
 Without a display, run the graphical examples with `-platform offscreen`.
+
+Programs that need a module the installed Nt was built without (Vulkan, Multimedia, ...) are left out with a message at
+configure time. `render_widgets`, `render_charts` and `painting --write` render the pictures of Nt's documentation:
+run them with the `doc/images` directory of a checkout of Nt as the argument.
+
+## Zephyr
+
+`zephyr/hello` is a Zephyr application that uses Nt Core and Nt Network (a timer and a TCP echo server), and
+`zephyr/qemu` a self-checking one that runs on an emulated board and serves a web page with its results. They are
+built with west in a Zephyr workspace; this repository is not one, so name a checkout of Nt as a module:
+
+```sh
+west build -b mimxrt1170_evk/mimxrt1176/cm7 zephyr/hello -- -DNT_ROOT=/path/to/Nt
+west build -b mps2/an385 zephyr/qemu -t run -- -DNT_ROOT=/path/to/Nt
+```
+
+The guide [Nt on Zephyr](https://open-nt.github.io/Nt6/nt-zephyr.html) has the details.
 
 ## Mochimaru no Daibouken
 

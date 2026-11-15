@@ -7,7 +7,9 @@
 #   ctest --test-dir build
 #
 # hello/, signals/ and widgets/ are also projects of their own: `cmake -S hello -B build-hello`.
-# qt/ builds the widget examples against Qt 6 instead and is not part of this project.
+# qt/ builds the widget examples against Qt 6 instead and is not part of this project; zephyr/ holds Zephyr
+# applications built with west (see zephyr/hello/CMakeLists.txt). Programs that need a module the installed Nt
+# was built without (Vulkan, Multimedia, ...) are left out with a message.
 cmake_minimum_required(VERSION 3.18)
 project(Nt6Examples LANGUAGES CXX)
 
@@ -52,6 +54,15 @@ target_link_libraries(hello_window PRIVATE Nt6::Gui)
 # and the OpenGL paint engine can be switched between at run time.
 add_executable(painter_bench gui/painter_bench.cpp)
 target_link_libraries(painter_bench PRIVATE Nt6::Gui Nt6::OpenGL)
+
+# Paths, gradients, pens and transformations, antialiased, in software or with OpenGL (painting --gl); it also renders
+# the pictures of the "Painting" guide of Nt (painting --write <Nt>/doc/images) and times the scenes (painting --bench).
+add_executable(painting gui/painting.cpp)
+target_link_libraries(painting PRIVATE Nt6::OpenGL)
+
+# An OpenGL window painted with OpenGL and QPainter, with or without vsync; see QOpenGLWindow.
+add_executable(glwindow opengl/glwindow.cpp)
+target_link_libraries(glwindow PRIVATE Nt6::OpenGL)
 
 # The pixel art of the platform game, drawn on one sheet for review.
 add_executable(sprite_sheet platformer/sprite_sheet.cpp platformer/sprites.h)
@@ -101,3 +112,91 @@ target_link_libraries(hello_server PRIVATE Nt6::HttpServer)
 add_executable(dbus_clock dbus/clock.cpp)
 target_link_libraries(dbus_clock PRIVATE Nt6::DBus)
 nt_enable_automoc(dbus_clock)
+
+# A triangle rendered with hardware ray tracing in a QVulkanWindow; see "Using Nt Vulkan" in the documentation. The
+# SPIR-V shaders are checked in (vulkan/shaders/compile.sh rebuilds them with glslc). Needs an Nt built with the Vulkan
+# headers, like the path tracer.
+nt_add_resources(rtriangle_resources vulkan/shaders/rtriangle.qrc)
+add_executable(rtriangle vulkan/rtriangle.cpp ${rtriangle_resources})
+target_link_libraries(rtriangle PRIVATE Nt6::Gui)
+
+# A live dashboard of charts, and the program that renders the pictures of the "Using Nt Charts" guide
+# (render_charts <Nt>/doc/images).
+if(TARGET Nt6::Charts)
+    add_executable(chart_dashboard charts/dashboard.cpp)
+    target_link_libraries(chart_dashboard PRIVATE Nt6::Charts)
+    add_executable(render_charts charts/render_charts.cpp)
+    target_link_libraries(render_charts PRIVATE Nt6::Charts)
+else()
+    message(STATUS "No Nt6::Charts: chart_dashboard and render_charts are left out")
+endif()
+
+# Scripting with QJSEngine, and a QML document with a C++ type; see "Using Nt Qml" and "Using Nt QML".
+if(TARGET Nt6::Qml)
+    add_executable(js_scripting qml/scripting.cpp)
+    target_link_libraries(js_scripting PRIVATE Nt6::Qml)
+    nt_enable_automoc(js_scripting)
+    add_executable(hello_qml qml/hello_qml.cpp)
+    target_link_libraries(hello_qml PRIVATE Nt6::Qml)
+    nt_enable_automoc(hello_qml)
+else()
+    message(STATUS "No Nt6::Qml: js_scripting and hello_qml are left out")
+endif()
+
+# An address book in an SQLite database; see "Using Nt SQL" in the documentation.
+if(TARGET Nt6::Sql)
+    add_executable(contacts sql/contacts.cpp)
+    target_link_libraries(contacts PRIVATE Nt6::Sql)
+else()
+    message(STATUS "No Nt6::Sql: contacts is left out")
+endif()
+
+# A push-to-talk switch on a GPIO line; see "Using Nt GPIO" in the documentation.
+if(TARGET Nt6::Gpio)
+    add_executable(ptt gpio/ptt.cpp)
+    target_link_libraries(ptt PRIVATE Nt6::Gpio)
+else()
+    message(STATUS "No Nt6::Gpio: ptt is left out")
+endif()
+
+# Prints what the gamepads do; see "Using Nt Gamepad" in the documentation.
+if(TARGET Nt6::Gamepad)
+    add_executable(gamepadinfo gamepad/gamepadinfo.cpp)
+    target_link_libraries(gamepadinfo PRIVATE Nt6::Gamepad)
+else()
+    message(STATUS "No Nt6::Gamepad: gamepadinfo is left out")
+endif()
+
+# Prints what a glTF file holds; see "Using Nt glTF" in the documentation.
+if(TARGET Nt6::Gltf)
+    add_executable(gltfinfo gltf/gltfinfo.cpp)
+    target_link_libraries(gltfinfo PRIVATE Nt6::Gltf)
+else()
+    message(STATUS "No Nt6::Gltf: gltfinfo is left out")
+endif()
+
+# Audio devices and a tone, WAV playback, decoding, recording, the camera and a viewfinder; see "Using Nt Multimedia".
+if(TARGET Nt6::Multimedia)
+    foreach(program audiodevices audioplayer camera recorder decoder)
+        add_executable(${program} multimedia/${program}.cpp)
+        target_link_libraries(${program} PRIVATE Nt6::Multimedia)
+    endforeach()
+    if(TARGET Nt6::MultimediaWidgets)
+        add_executable(viewfinder multimedia/viewfinder.cpp)
+        target_link_libraries(viewfinder PRIVATE Nt6::MultimediaWidgets)
+    endif()
+else()
+    message(STATUS "No Nt6::Multimedia: the multimedia examples are left out")
+endif()
+
+# FM sound effects and chip music, from C++ and from a QML document; see "Using Nt FM" in the documentation.
+if(TARGET Nt6::FM)
+    add_executable(fmplay fm/fmplay.cpp)
+    target_link_libraries(fmplay PRIVATE Nt6::FM)
+    if(TARGET Nt6::FMQml)
+        add_executable(fmqml fm/fmqml.cpp)
+        target_link_libraries(fmqml PRIVATE Nt6::FMQml)
+    endif()
+else()
+    message(STATUS "No Nt6::FM: fmplay and fmqml are left out")
+endif()

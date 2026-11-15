@@ -13,7 +13,6 @@
 #include <cstdio>
 
 static int runServer(QCoreApplication &app, quint16 port) {
-    //! [server]
     QWebSocketServer server(QStringLiteral("Nt echo"), QWebSocketServer::NonSecureMode);
     if (!server.listen(QHostAddress::LocalHost, port)) {
         std::fprintf(stderr, "cannot listen: %s\n", qPrintable(server.errorString()));
@@ -27,9 +26,7 @@ static int runServer(QCoreApplication &app, quint16 port) {
                          [socket](const QByteArray &message) { socket->sendBinaryMessage(message); });
         QObject::connect(socket, &QWebSocket::disconnected, socket, &QObject::deleteLater);
     });
-    //! [server]
 
-    //! [origin]
     // Browsers send the origin of the page; refuse pages from other sites.
     QObject::connect(&server, &QWebSocketServer::originAuthenticationRequired,
                      [](QWebSocketCorsAuthenticator *authenticator) {
@@ -37,11 +34,8 @@ static int runServer(QCoreApplication &app, quint16 port) {
                          authenticator->setAllowed(origin.isEmpty() || origin.startsWith("http://127.0.0.1") ||
                                                    origin.startsWith("http://localhost"));
                      });
-    //! [origin]
 
-    //! [subprotocols]
     server.setSupportedSubprotocols({QStringLiteral("echo.v2"), QStringLiteral("echo.v1")});
-    //! [subprotocols]
 
     std::printf("listening on %s\n", qPrintable(server.serverUrl().toString()));
     std::fflush(stdout);
@@ -49,7 +43,6 @@ static int runServer(QCoreApplication &app, quint16 port) {
 }
 
 static int runClient(QCoreApplication &app, const QUrl &url, const QString &text) {
-    //! [client]
     QWebSocket socket;
     QObject::connect(&socket, &QWebSocket::connected, [&] {
         std::printf("connected, subprotocol \"%s\"\n", qPrintable(socket.subprotocol()));
@@ -64,7 +57,6 @@ static int runClient(QCoreApplication &app, const QUrl &url, const QString &text
         std::fprintf(stderr, "error: %s\n", qPrintable(socket.errorString()));
         app.exit(1);
     });
-    //! [client]
 
     QWebSocketHandshakeOptions options;
     options.setSubprotocols({QStringLiteral("echo.v1")});

@@ -1,5 +1,4 @@
 // MIT License - see LICENSE
-//! [test]
 #include <QSignalSpy>
 #include <QTest>
 
@@ -57,4 +56,3 @@ private:
 
 QTEST_MAIN(TestCounter)
 #include "tst_counter.moc"
-//! [test]

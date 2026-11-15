@@ -16,7 +16,6 @@
 namespace {
 
 int listPorts() {
-    //! [list]
     const QList<QSerialPortInfo> ports = QSerialPortInfo::availablePorts();
     for (const QSerialPortInfo &info : ports) {
         QString line = info.portName() + "\t" + info.systemLocation() + "\t" + info.description();
@@ -25,7 +24,6 @@ int listPorts() {
                     QString::number(info.productIdentifier(), 16).rightJustified(4, QChar(u'0'));
         std::printf("%s\n", qPrintable(line));
     }
-    //! [list]
     return 0;
 }
 
@@ -76,7 +74,6 @@ int main(int argc, char *argv[]) {
         return 2;
     }
 
-    //! [settings]
     QSerialPort port(positional.first());
 
     bool ok = false;
@@ -116,27 +113,21 @@ int main(int argc, char *argv[]) {
     port.setParity(parity);
     port.setStopBits(stopBits);
     port.setFlowControl(flow);
-    //! [settings]
 
-    //! [open]
     if (!port.open(QIODevice::ReadWrite)) {
         std::fprintf(stderr, "serialterm: cannot open %s: %s\n", qPrintable(port.portName()),
                      qPrintable(port.errorString()));
         return 1;
     }
-    //! [open]
 
     int exitCode = 0;
 
-    //! [read]
     QObject::connect(&port, &QIODevice::readyRead, [&port] {
         const QByteArray data = port.readAll();
         std::fwrite(data.constData(), 1, static_cast<std::size_t>(data.size()), stdout);
         std::fflush(stdout);
     });
-    //! [read]
 
-    //! [errors]
     QObject::connect(&port, &QSerialPort::errorOccurred, [&](QSerialPort::SerialPortError error) {
         std::fprintf(stderr, "serialterm: %s\n", qPrintable(port.errorString()));
         // A device that disappears, for example an unplugged USB adapter, cannot recover.
@@ -145,7 +136,6 @@ int main(int argc, char *argv[]) {
             QCoreApplication::quit();
         }
     });
-    //! [errors]
 
     // When the input ends, give the device a moment to send its last reply.
     const int seconds = parser.value("time").toInt();
@@ -155,7 +145,6 @@ int main(int argc, char *argv[]) {
     if (seconds > 0)
         quitTimer.start(seconds * 1000);
 
-    //! [write]
     QSocketNotifier input(STDIN_FILENO, QSocketNotifier::Read);
     QObject::connect(&input, &QSocketNotifier::activated, [&] {
         char buffer[512];
@@ -168,7 +157,6 @@ int main(int argc, char *argv[]) {
         if (!quitTimer.isActive())
             quitTimer.start(500);
     });
-    //! [write]
 
     const int result = app.exec();
     port.close();

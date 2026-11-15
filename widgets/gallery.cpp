@@ -29,7 +29,6 @@
 
 namespace {
 
-//! [meter]
 // A bar that shows a value from 0 to 100. Click or drag it, turn the mouse wheel over it, or use the arrow
 // keys while it has the focus.
 class Meter : public QWidget {
@@ -107,7 +106,6 @@ private:
     int m_value = 35;
     QColor m_accent{"#3d8ec9"};
 };
-//! [meter]
 
 // A small square of color that can be chosen.
 class Swatch : public QWidget {

@@ -16,7 +16,6 @@
 #include <cstdio>
 #include <cstring>
 
-//! [generate]
 static bool paintPicture(QPaintDevice *device) {
     QPainter painter(device);
     if (!painter.isActive())
@@ -41,9 +40,7 @@ static bool writePicture(const QString &fileName) {
     generator.setDescription("Painted with QPainter on a QSvgGenerator.");
     return paintPicture(&generator); // the document is complete when the painter is destroyed
 }
-//! [generate]
 
-//! [render]
 static QImage renderToImage(const QByteArray &svg, const QSize &size) {
     QSvgRenderer renderer(svg);
     QImage image(size, QImage::Format_ARGB32_Premultiplied);
@@ -55,7 +52,6 @@ static QImage renderToImage(const QByteArray &svg, const QSize &size) {
     }
     return image;
 }
-//! [render]
 
 int main(int argc, char **argv) {
     if (argc == 3 && std::strcmp(argv[1], "--write") == 0) {
@@ -67,7 +63,6 @@ int main(int argc, char **argv) {
     }
 
     QApplication app(argc, argv);
-    //! [widget]
     QSvgWidget widget;
     widget.renderer()->setAspectRatioMode(Qt::KeepAspectRatio);
     if (argc > 1) {
@@ -88,7 +83,6 @@ int main(int argc, char **argv) {
     widget.setWindowTitle("Nt SVG");
     widget.resize(widget.sizeHint());
     widget.show();
-    //! [widget]
 
     const QImage preview = renderToImage(QByteArray("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'>"
                                                     "<circle cx='4' cy='4' r='3' fill='teal'/></svg>"),

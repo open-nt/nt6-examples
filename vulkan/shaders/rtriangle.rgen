@@ -1,0 +1,25 @@
+// MIT License - see LICENSE
+//
+// Ray generation: one ray per pixel from a camera at the origin looking down +Z, into the storage image.
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
+layout(set = 0, binding = 1, rgba8) uniform image2D image;
+
+layout(push_constant) uniform Params { uint swapRedBlue; } params; // 1 when the target is a BGRA image
+
+layout(location = 0) rayPayloadEXT vec3 color;
+
+void main() {
+    const vec2 pixel = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
+    const vec2 uv = pixel / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
+    const float aspect = float(gl_LaunchSizeEXT.x) / float(gl_LaunchSizeEXT.y);
+    const vec3 origin = vec3(0.0, 0.0, -2.5);
+    const vec3 direction = normalize(vec3(uv.x * aspect, -uv.y, 1.0));
+    color = vec3(0.0);
+    traceRayEXT(scene, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, origin, 0.001, direction, 100.0, 0);
+    if (params.swapRedBlue != 0u)
+        color = color.bgr;
+    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(color, 1.0));
+}

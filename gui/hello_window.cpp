@@ -10,7 +10,6 @@
 #include <QPainter>
 #include <QRasterWindow>
 
-//! [window]
 class HelloWindow : public QRasterWindow {
 public:
     HelloWindow() {
@@ -66,7 +65,6 @@ private:
     int m_color = 0;
     const QColor m_colors[3] = {QColor("#e4572e"), QColor("#29a35a"), QColor("#3a7bd5")};
 };
-//! [window]
 
 int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
