@@ -28,6 +28,13 @@ enable_testing()
 # The smallest program: a QCoreApplication and a timer.
 add_subdirectory(hello)
 
+# A text chat on the local network with Nt Comms; it also builds for Android with the NDK (see comms/CMakeLists.txt).
+if(TARGET Nt6::Comms)
+    add_subdirectory(comms)
+else()
+    message(STATUS "Nt Comms is not in the installed Nt: leaving out comms/")
+endif()
+
 # The patterns of the "Signals and Slots" guide; it checks itself.
 add_subdirectory(signals)
 add_test(NAME signals COMMAND signals)
