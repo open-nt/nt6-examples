@@ -13,8 +13,16 @@ project(qt_hello LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets)
 qt_standard_project_setup()
 
 qt_add_executable(qt_hello main.cpp)
 target_link_libraries(qt_hello PRIVATE Qt6::Widgets)
+
+# OpenGL ES on Android: the window of the example of opengl/, clearing with OpenGL and painting with QPainter.
+qt_add_executable(qt_glwindow ../opengl/glwindow.cpp)
+target_link_libraries(qt_glwindow PRIVATE Qt6::OpenGL)
+
+# QOpenGLWidget among ordinary widgets.
+qt_add_executable(qt_glwidget glwidget.cpp)
+target_link_libraries(qt_glwidget PRIVATE Qt6::OpenGLWidgets Qt6::Widgets)
