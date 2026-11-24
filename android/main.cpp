@@ -3,6 +3,8 @@
 // A Qt 6 application with no Android-specific code: a counter, a text field and a list. The same source runs on the
 // desktop and, built with Nt, on an Android device.
 #include <QApplication>
+#include <QClipboard>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -34,6 +36,14 @@ int main(int argc, char *argv[]) {
     auto *edit = new QLineEdit;
     edit->setPlaceholderText(QStringLiteral("Type a note and press Enter"));
     layout->addWidget(edit);
+    auto *row = new QHBoxLayout;
+    auto *copy = new QPushButton(QStringLiteral("Copy"));
+    auto *paste = new QPushButton(QStringLiteral("Paste"));
+    row->addWidget(copy);
+    row->addWidget(paste);
+    layout->addLayout(row);
+    QObject::connect(copy, &QPushButton::clicked, [&] { QApplication::clipboard()->setText(edit->text()); });
+    QObject::connect(paste, &QPushButton::clicked, [&] { edit->insert(QApplication::clipboard()->text()); });
     auto *notes = new QListWidget;
     layout->addWidget(notes, 1);
     QObject::connect(edit, &QLineEdit::returnPressed, [&] {
