@@ -2,9 +2,13 @@
 #include "board.h"
 
 #include <zephyr/kernel.h>
+#include <zephyr/net/net_event.h>
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/net_l2.h>
+#include <zephyr/net/net_mgmt.h>
 #include <zephyr/version.h>
+
+#include <cstdio>
 
 // Symbols of the linker script: the end of what the image takes of the flash, and the limits of its RAM.
 extern "C" {
@@ -28,6 +32,25 @@ void limit(struct net_if *iface, void *) {
 }
 
 void countThread(const struct k_thread *, void *count) { ++*static_cast<int *>(count); }
+
+unsigned short g_webPort = 0;
+struct net_mgmt_event_callback g_addressCallback;
+
+void printUrl(struct net_if *iface) {
+    const struct net_in_addr *address = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
+    if (!address || net_ipv4_is_addr_loopback(address))
+        return;
+    char text[NET_IPV4_ADDR_LEN];
+    if (net_addr_ntop(NET_AF_INET, address, text, sizeof text))
+        std::printf("  web page at http://%s:%u/\n", text, static_cast<unsigned>(g_webPort));
+}
+
+void onAddress(struct net_mgmt_event_callback *, uint64_t event, struct net_if *iface) {
+    if (event == NET_EVENT_IPV4_ADDR_ADD)
+        printUrl(iface);
+}
+
+void printIfAddressed(struct net_if *iface, void *) { printUrl(iface); }
 
 const char *cpuName() {
 #if defined(CONFIG_CPU_CORTEX_M0)
@@ -64,6 +87,13 @@ const char *architectureName() {
 } // namespace
 
 void limitEthernetFrames() { net_if_foreach(&limit, nullptr); }
+
+void printWebAddress(unsigned short port) {
+    g_webPort = port;
+    net_mgmt_init_event_callback(&g_addressCallback, &onAddress, NET_EVENT_IPV4_ADDR_ADD);
+    net_mgmt_add_event_callback(&g_addressCallback);
+    net_if_foreach(&printIfAddressed, nullptr);
+}
 
 long long uptimeMs() { return k_uptime_get(); }
 

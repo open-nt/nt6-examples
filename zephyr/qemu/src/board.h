@@ -15,6 +15,10 @@
 // A board with another Ethernet controller needs none of this.
 void limitEthernetFrames();
 
+// Prints "web page at http://<address>:<port>/" when the board has an IPv4 address, at once if it has one
+// already and otherwise when DHCP or the network configuration assigns it, and again if the address changes.
+void printWebAddress(unsigned short port);
+
 // What the sample knows about the processor and the resources of the board it runs on. A size or a count that
 // is not known is -1.
 struct BoardInfo {

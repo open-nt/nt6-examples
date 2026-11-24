@@ -76,13 +76,32 @@ run them with the `doc/images` directory of a checkout of Nt as the argument.
 ## Zephyr
 
 `zephyr/hello` is a Zephyr application that uses Nt Core and Nt Network (a timer and a TCP echo server), and
-`zephyr/qemu` a self-checking one that runs on an emulated board and serves a web page with its results. They are
-built with west in a Zephyr workspace; this repository is not one, so name a checkout of Nt as a module:
+`zephyr/qemu` a self-checking one that serves a web page with its results. It runs on an emulated board or on an
+NXP i.MX RT1170 EVK. They are built with west in a Zephyr workspace; this repository is not one, so name a checkout of
+Nt as a module:
 
 ```sh
 west build -b mimxrt1170_evk/mimxrt1176/cm7 zephyr/hello -- -DNT_ROOT=/path/to/Nt
 west build -b mps2/an385 zephyr/qemu -t run -- -DNT_ROOT=/path/to/Nt
+west build -b mimxrt1170_evk/mimxrt1176/cm7 zephyr/qemu -- -DNT_ROOT=/path/to/Nt
 ```
+
+On the RT1170 EVK, set the boot switch SW1 to `0001b` and flash with `west flash` (the NXP LinkServer runner), then
+set SW1 to `0010b`, connect the Ethernet port to your network and reset the board. The board takes an address from DHCP
+and prints the address of its web page on the serial console (115200 baud, the on-board debugger's USB port):
+
+```
+Nt 6.0.6 on Zephyr
+  web page on port 8080
+  web page at http://192.168.1.87:8080/
+```
+
+Open that address in a browser, or fetch the results as JSON from `/api/status`. The settings for the board are in
+`zephyr/qemu/boards/mimxrt1170_evk_mimxrt1176_cm7.conf`; the TLS checks are left out on that board for now.
+Known problem: several requests at once with large headers, as a browser sends them with its cookies, make the board
+stop answering on the network. The receive ring of the Ethernet controller then holds frames that Zephyr's ENET driver
+never reads. One request after another works, and the same sample runs reliably under QEMU.
+Under QEMU the page is at `http://127.0.0.1:8080/` when QEMU forwards the port (see the guide).
 
 The guide [Nt on Zephyr](https://open-nt.github.io/Nt6/nt-zephyr.html) has the details.
 

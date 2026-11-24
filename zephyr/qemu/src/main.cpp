@@ -67,10 +67,12 @@ int main() {
 
     // The web page comes first, so that it can be opened while the checks run, and shows them as they finish.
     QString webError;
-    if (startWebServer(8080, &webError))
+    if (startWebServer(8080, &webError)) {
         std::printf("  web page on port 8080\n");
-    else
+        printWebAddress(8080); // the full address follows once the board has one
+    } else {
         std::printf("  no web page: %s\n", qPrintable(webError));
+    }
 
     // Strings and JSON, with no event loop involved.
     QJsonObject object;
