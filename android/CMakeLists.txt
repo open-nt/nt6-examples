@@ -26,3 +26,7 @@ target_link_libraries(qt_glwindow PRIVATE Qt6::OpenGL)
 # QOpenGLWidget among ordinary widgets.
 qt_add_executable(qt_glwidget glwidget.cpp)
 target_link_libraries(qt_glwidget PRIVATE Qt6::OpenGLWidgets Qt6::Widgets)
+
+# Fingers on a touch screen: QTouchEvent with several points, and a pinch.
+qt_add_executable(qt_multitouch multitouch.cpp)
+target_link_libraries(qt_multitouch PRIVATE Qt6::Widgets)
