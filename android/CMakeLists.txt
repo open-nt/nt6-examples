@@ -13,7 +13,7 @@ project(qt_hello LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets)
+find_package(Qt6 REQUIRED COMPONENTS Gui Widgets OpenGL OpenGLWidgets)
 qt_standard_project_setup()
 
 qt_add_executable(qt_hello main.cpp)
@@ -30,3 +30,7 @@ target_link_libraries(qt_glwidget PRIVATE Qt6::OpenGLWidgets Qt6::Widgets)
 # Fingers on a touch screen: QTouchEvent with several points, and a pinch.
 qt_add_executable(qt_multitouch multitouch.cpp)
 target_link_libraries(qt_multitouch PRIVATE Qt6::Widgets)
+
+# A QVulkanWindow that clears with Vulkan, without shaders.
+qt_add_executable(qt_vulkanwindow vulkanwindow.cpp)
+target_link_libraries(qt_vulkanwindow PRIVATE Qt6::Gui)
