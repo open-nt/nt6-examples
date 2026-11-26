@@ -56,6 +56,12 @@ int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     const bool systemDark = QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
     QColor seed(0x67, 0x50, 0xa4);
+#ifdef HAVE_MATERIAL_STYLE
+    // The color of the device's own theme, where it has one (Android 12 and later).
+    const QColor system = QMaterialStyle::systemSeedColor();
+    if (system.isValid())
+        seed = system;
+#endif
     apply(seed, systemDark);
 
     QWidget window;
@@ -128,6 +134,16 @@ int main(int argc, char *argv[]) {
             apply(seed, dark->isChecked());
         });
     }
+#ifdef HAVE_MATERIAL_STYLE
+    if (system.isValid()) {
+        auto *pick = button(QStringLiteral("System"), "outlined");
+        seeds->addWidget(pick);
+        QObject::connect(pick, &QPushButton::clicked, [&seed, system, dark] {
+            seed = system;
+            apply(seed, dark->isChecked());
+        });
+    }
+#endif
     layout->addLayout(seeds);
     layout->addStretch(1);
     tabs->addTab(controls, QStringLiteral("Controls"));
