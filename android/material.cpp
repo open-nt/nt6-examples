@@ -1,8 +1,8 @@
 // MIT License - see LICENSE
 //
 // The Material 3 Expressive style of Nt (QMaterialStyle): buttons, a text field, check boxes, radio buttons,
-// switches, sliders, progress bars, tabs, combo boxes, menus, dialogs and a list, in a scheme made from a seed color,
-// light or dark. With Qt, which has no such style, it builds and runs in the default style.
+// switches, sliders, progress bars, tabs, combo boxes, menus, dialogs, a list, a button group, a split button and a floating action
+// button, in a scheme made from a seed color, light or dark. With Qt, which has no such style, it builds and runs in the default style.
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -19,6 +19,7 @@
 #include <QSlider>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QToolButton>
 #include <QStyleHints>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -158,6 +159,35 @@ int main(int argc, char *argv[]) {
     off->setValue(60);
     off->setEnabled(false);
     page->addWidget(off);
+    // A connected button group, for a choice of one.
+    page->addWidget(new QLabel(QStringLiteral("Button group")));
+    auto *group = new QWidget;
+    group->setProperty("materialButtonGroup", QStringLiteral("connected"));
+    auto *periods = new QHBoxLayout(group);
+    periods->setContentsMargins(0, 0, 0, 0);
+    for (const char *name : {"Day", "Week", "Month"}) {
+        auto *period = new QPushButton(QString::fromLatin1(name));
+        period->setCheckable(true);
+        period->setAutoExclusive(true);
+        period->setChecked(periods->count() == 0);
+        periods->addWidget(period);
+    }
+    page->addWidget(group);
+    // Busy: a range of 0 to 0, as a line, or as the loading indicator in either of its two forms.
+    page->addWidget(new QLabel(QStringLiteral("Busy")));
+    auto *busy = new QProgressBar;
+    busy->setRange(0, 0);
+    page->addWidget(busy);
+    auto *indicators = new QHBoxLayout;
+    indicators->setSpacing(24);
+    for (const char *form : {"loading", "containedLoading"}) {
+        auto *indicator = new QProgressBar;
+        indicator->setProperty("materialProgress", QString::fromLatin1(form));
+        indicator->setRange(0, 0);
+        indicators->addWidget(indicator);
+    }
+    indicators->addStretch(1);
+    page->addLayout(indicators);
     page->addStretch(1);
     tabs->addTab(more, QStringLiteral("More"));
 
@@ -180,6 +210,19 @@ int main(int argc, char *argv[]) {
     column->addWidget(menuButton);
     auto *ask = button(QStringLiteral("Dialog"), "filled");
     column->addWidget(ask);
+    // A split button: its action, and a menu of others.
+    auto *send = new QToolButton;
+    send->setText(QStringLiteral("Send"));
+    send->setProperty("materialButton", QStringLiteral("filled"));
+    auto *others = new QMenu(send);
+    others->addAction(QStringLiteral("Send later"));
+    others->addAction(QStringLiteral("Save draft"));
+    send->setMenu(others);
+    send->setPopupMode(QToolButton::MenuButtonPopup);
+    column->addWidget(send, 0, Qt::AlignLeft);
+    int sent = 0;
+    QObject::connect(send, &QToolButton::clicked,
+                     [&sent, send] { send->setText(QStringLiteral("Sent %1").arg(++sent)); });
     QObject::connect(ask, &QPushButton::clicked, [&window] {
         auto *box = new QMessageBox(&window);
         box->setText(QStringLiteral("Delete the note?"));
@@ -189,6 +232,14 @@ int main(int argc, char *argv[]) {
         box->open();
     });
     column->addStretch(1);
+    // A floating action button, which opens a menu of what can be made.
+    auto *fab = button(QString(), "fab");
+    auto *create = new QMenu(fab);
+    create->addAction(QStringLiteral("Note"));
+    create->addAction(QStringLiteral("Shopping list"));
+    create->addAction(QStringLiteral("Reminder"));
+    fab->setMenu(create);
+    column->addWidget(fab, 0, Qt::AlignRight);
     tabs->addTab(popups, QStringLiteral("Popups"));
 
     // A list that scrolls under a finger.
