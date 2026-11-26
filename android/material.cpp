@@ -2,7 +2,7 @@
 //
 // The Material 3 Expressive style of Nt (QMaterialStyle): buttons, a text field, check boxes, radio buttons,
 // switches, sliders, progress bars, tabs, combo boxes, menus, dialogs, a list, a button group, a split button, a
-// floating action button, a floating toolbar, button sizes and text fields, in a scheme made from a seed color, light or dark. With Qt, which has
+// floating action button, a floating toolbar, button sizes, text fields and icon buttons, in a scheme made from a seed color, light or dark. With Qt, which has
 // no such style, it builds and runs in the default style.
 #include <QApplication>
 #include <QCheckBox>
@@ -28,6 +28,11 @@
 #if __has_include(<QMaterialStyle>)
 #include <QMaterialStyle>
 #define HAVE_MATERIAL_STYLE
+#endif
+// Google's icons (Apache 2.0, not MIT), in a package of Nt's own: with it linked, the gallery shows icon buttons.
+#if __has_include(<QMaterialSymbols>)
+#include <QMaterialSymbols>
+#define HAVE_MATERIAL_SYMBOLS
 #endif
 
 namespace {
@@ -216,8 +221,14 @@ int main(int argc, char *argv[]) {
     // A floating toolbar, with choices that stay checked. It would go over the content of an editor.
     auto *format = new QToolBar;
     format->setProperty("materialToolBar", QStringLiteral("floating"));
+#ifdef HAVE_MATERIAL_SYMBOLS
+    for (const char *name : {"format_bold", "format_italic", "format_underlined"})
+        format->addAction(QMaterialSymbols::icon(QString::fromLatin1(name)), QString::fromLatin1(name))
+            ->setCheckable(true);
+#else
     for (const char *name : {"B", "I", "U"})
         format->addAction(QString::fromLatin1(name))->setCheckable(true);
+#endif
     format->actions().first()->setChecked(true);
     format->addSeparator();
     format->addAction(QStringLiteral("Aa"));
@@ -324,6 +335,25 @@ int main(int argc, char *argv[]) {
     square->setProperty("materialButtonShape", QStringLiteral("square"));
     square->setCheckable(true);
     rows->addWidget(square, 0, Qt::AlignLeft);
+#ifdef HAVE_MATERIAL_SYMBOLS
+    // Icon buttons of the four kinds; the heart stays checked.
+    auto *icons = new QHBoxLayout;
+    icons->setSpacing(8);
+    const std::pair<const char *, const char *> kinds[] = {
+        {"standard", "search"}, {"filled", "add"}, {"tonal", "edit"}, {"outlined", "share"}, {"filled", "favorite"}};
+    for (const auto &[kind, symbol] : kinds) {
+        auto *icon = new QToolButton;
+        icon->setProperty("materialIconButton", QString::fromLatin1(kind));
+        // Without a color: the style gives it that of the button, and it is drawn at the size it is shown at.
+        const bool heart = QLatin1String(symbol) == QLatin1String("favorite");
+        QIcon picture = QMaterialSymbols::icon(QString::fromLatin1(symbol), QColor(), heart);
+        icon->setIcon(picture);
+        icon->setCheckable(heart);
+        icons->addWidget(icon);
+    }
+    icons->addStretch(1);
+    rows->addLayout(icons);
+#endif
     rows->addStretch(1);
     tabs->addTab(sizes, QStringLiteral("Sizes"));
 

@@ -38,3 +38,9 @@ target_link_libraries(qt_vulkanwindow PRIVATE Qt6::Gui)
 # The Material 3 Expressive style of Nt.
 qt_add_executable(qt_material material.cpp)
 target_link_libraries(qt_material PRIVATE Qt6::Widgets)
+# Google's icons, in a package of Nt's own whose icons are under Apache 2.0: with Nt, and if it is installed, the
+# gallery links with it and shows icon buttons. An application that does so has to follow that license.
+find_package(Nt6 QUIET)
+if(TARGET Nt6::MaterialSymbols)
+    target_link_libraries(qt_material PRIVATE Nt6::MaterialSymbols)
+endif()
