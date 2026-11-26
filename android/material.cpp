@@ -2,15 +2,23 @@
 //
 // The Material 3 Expressive style of Nt (QMaterialStyle): buttons, a text field, check boxes, radio buttons,
 // switches, sliders, progress bars, tabs, combo boxes, menus, dialogs, a list, a button group, a split button, a
-// floating action button, a floating toolbar, button sizes, text fields, icon buttons, a top app bar and a navigation bar, in a scheme made from a seed color, light or dark. With Qt, which has
-// no such style, it builds and runs in the default style.
+// floating action button, a floating toolbar, button sizes, text fields, icon buttons, a top app bar, a navigation
+// bar, a snackbar, circular progress, chips, a card, a divider and a date picker, in a scheme made from a seed color,
+// light or dark. With Qt, which has no such style, it builds and runs in the default style.
 #include <QApplication>
+#include <QCalendarWidget>
+#include <QDate>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMainWindow>
+#include <QStatusBar>
 #include <QMenu>
 #include <QMessageBox>
 #include <QProgressBar>
@@ -69,10 +77,7 @@ int main(int argc, char *argv[]) {
 #endif
     apply(seed, systemDark);
 
-    QWidget window;
-    auto *outer = new QVBoxLayout(&window);
-    outer->setContentsMargins(0, 0, 0, 0);
-    outer->setSpacing(0);
+    QMainWindow window;
     // A top app bar: the window's title, and actions after it.
     auto *appBar = new QToolBar;
     appBar->setProperty("materialToolBar", QStringLiteral("appBar"));
@@ -83,12 +88,19 @@ int main(int argc, char *argv[]) {
     appBar->addAction(QMaterialSymbols::icon(QStringLiteral("search")), QStringLiteral("Search"));
     appBar->addAction(QMaterialSymbols::icon(QStringLiteral("more_vert")), QStringLiteral("More"));
 #endif
-    outer->addWidget(appBar);
+    window.addToolBar(appBar);
     // The pages, and a bottom navigation bar to go between them.
     auto *tabs = new QTabWidget;
     tabs->setTabPosition(QTabWidget::South);
     tabs->tabBar()->setProperty("materialTabBar", QStringLiteral("navigationBar"));
-    outer->addWidget(tabs);
+    window.setCentralWidget(tabs);
+    // The status bar as a snackbar, which floats above the navigation bar while it has a message.
+    auto *snackbar = new QStatusBar;
+    snackbar->setProperty("materialStatusBar", QStringLiteral("snackbar"));
+    auto *undo = new QPushButton(QStringLiteral("Undo"));
+    snackbar->addPermanentWidget(undo);
+    window.setStatusBar(snackbar);
+    QObject::connect(undo, &QPushButton::clicked, snackbar, &QStatusBar::clearMessage);
     auto *controls = new QWidget;
     auto *layout = new QVBoxLayout(controls);
     layout->setContentsMargins(16, 16, 16, 16);
@@ -164,6 +176,36 @@ int main(int argc, char *argv[]) {
     }
 #endif
     layout->addLayout(seeds);
+
+    // A divider, chips and a card.
+    auto *line = new QFrame;
+    line->setFrameStyle(static_cast<int>(QFrame::HLine) | QFrame::Sunken);
+    layout->addWidget(line);
+    auto *chips = new QHBoxLayout;
+    const auto chip = [chips](const char *kind, const QString &text) {
+        auto *b = button(text, nullptr);
+        b->setProperty("materialChip", QString::fromLatin1(kind));
+        chips->addWidget(b);
+        return b;
+    };
+    auto *assist = chip("assist", QStringLiteral("Share"));
+#ifdef HAVE_MATERIAL_SYMBOLS
+    assist->setIcon(QMaterialSymbols::icon(QStringLiteral("share")));
+#else
+    Q_UNUSED(assist)
+#endif
+    chip("filter", QStringLiteral("Unread"))->setCheckable(true);
+    auto *entered = chip("input", QStringLiteral("Hazel"));
+    QObject::connect(entered, &QPushButton::clicked, entered, &QWidget::hide);
+    chips->addStretch(1);
+    layout->addLayout(chips);
+    auto *card = new QFrame;
+    card->setProperty("materialCard", QStringLiteral("filled"));
+    auto *contents = new QVBoxLayout(card);
+    contents->setContentsMargins(16, 12, 16, 12);
+    contents->addWidget(new QLabel(QStringLiteral("A filled card")));
+    contents->addWidget(new QLabel(QStringLiteral("Its layout holds what is in it.")));
+    layout->addWidget(card);
     layout->addStretch(1);
     tabs->addTab(controls, QStringLiteral("Controls"));
 
@@ -229,6 +271,17 @@ int main(int argc, char *argv[]) {
         indicator->setRange(0, 0);
         indicators->addWidget(indicator);
     }
+    // The circular indicator, busy, and part of the way, which the slider sets.
+    auto *spinning = new QProgressBar;
+    spinning->setProperty("materialProgress", QStringLiteral("circular"));
+    spinning->setRange(0, 0);
+    indicators->addWidget(spinning);
+    auto *ring = new QProgressBar;
+    ring->setProperty("materialProgress", QStringLiteral("circular"));
+    ring->setTextVisible(false);
+    ring->setValue(slider->value());
+    indicators->addWidget(ring);
+    QObject::connect(slider, &QSlider::valueChanged, ring, &QProgressBar::setValue);
     indicators->addStretch(1);
     page->addLayout(indicators);
     page->addStretch(1);
@@ -268,6 +321,27 @@ int main(int argc, char *argv[]) {
     column->addWidget(menuButton);
     auto *ask = button(QStringLiteral("Dialog"), "filled");
     column->addWidget(ask);
+    // A calendar in a dialog: Material's date picker. Without week numbers it fits a phone.
+    auto *when = button(QStringLiteral("Pick a date"), "tonal");
+    column->addWidget(when);
+    QObject::connect(when, &QPushButton::clicked, [when] {
+        QDialog dialog(when->window());
+        auto *rows = new QVBoxLayout(&dialog);
+        rows->setContentsMargins(16, 16, 16, 16);
+        auto *calendar = new QCalendarWidget;
+        calendar->setVerticalHeaderFormat(QCalendarWidget::NoVerticalHeader);
+        calendar->setSelectedDate(when->property("date").isValid() ? when->property("date").toDate()
+                                                                   : QDate::currentDate());
+        rows->addWidget(calendar);
+        auto *answers = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+        rows->addWidget(answers);
+        QObject::connect(answers, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        QObject::connect(answers, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        if (dialog.exec() == QDialog::Accepted) {
+            when->setProperty("date", calendar->selectedDate());
+            when->setText(calendar->selectedDate().toString(Qt::ISODate));
+        }
+    });
     // A split button: its action, and a menu of others.
     auto *send = new QToolButton;
     send->setText(QStringLiteral("Send"));
@@ -296,8 +370,10 @@ int main(int argc, char *argv[]) {
                             text.isEmpty() || number ? QString() : QStringLiteral("A weight is a number"));
     });
     int sent = 0;
-    QObject::connect(send, &QToolButton::clicked,
-                     [&sent, send] { send->setText(QStringLiteral("Sent %1").arg(++sent)); });
+    QObject::connect(send, &QToolButton::clicked, [&sent, send, snackbar] {
+        send->setText(QStringLiteral("Sent %1").arg(++sent));
+        snackbar->showMessage(QStringLiteral("Message sent"), 6000);
+    });
     QObject::connect(ask, &QPushButton::clicked, [&window] {
         auto *box = new QMessageBox(&window);
         box->setText(QStringLiteral("Delete the note?"));
