@@ -147,6 +147,12 @@ int main(int argc, char *argv[]) {
     page->addWidget(progress);
     auto *labelled = new QProgressBar;
     page->addWidget(labelled);
+    // The part that is done as a wave.
+    auto *wavy = new QProgressBar;
+    wavy->setProperty("materialProgress", QStringLiteral("wavy"));
+    wavy->setTextVisible(false);
+    page->addWidget(wavy);
+    QObject::connect(slider, &QSlider::valueChanged, wavy, &QProgressBar::setValue);
     QObject::connect(slider, &QSlider::valueChanged, progress, &QProgressBar::setValue);
     QObject::connect(slider, &QSlider::valueChanged, labelled, &QProgressBar::setValue);
     slider->setValue(40);
