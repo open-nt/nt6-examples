@@ -2,7 +2,7 @@
 //
 // The Material 3 Expressive style of Nt (QMaterialStyle): buttons, a text field, check boxes, radio buttons,
 // switches, sliders, progress bars, tabs, combo boxes, menus, dialogs, a list, a button group, a split button, a
-// floating action button, a floating toolbar, button sizes, text fields and icon buttons, in a scheme made from a seed color, light or dark. With Qt, which has
+// floating action button, a floating toolbar, button sizes, text fields, icon buttons, a top app bar and a navigation bar, in a scheme made from a seed color, light or dark. With Qt, which has
 // no such style, it builds and runs in the default style.
 #include <QApplication>
 #include <QCheckBox>
@@ -72,8 +72,22 @@ int main(int argc, char *argv[]) {
     QWidget window;
     auto *outer = new QVBoxLayout(&window);
     outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
+    // A top app bar: the window's title, and actions after it.
+    auto *appBar = new QToolBar;
+    appBar->setProperty("materialToolBar", QStringLiteral("appBar"));
+    appBar->setWindowTitle(QStringLiteral("Material 3"));
+#ifdef HAVE_MATERIAL_SYMBOLS
+    appBar->addAction(QMaterialSymbols::icon(QStringLiteral("menu")), QStringLiteral("Menu"));
+    appBar->addSeparator(); // the title goes here
+    appBar->addAction(QMaterialSymbols::icon(QStringLiteral("search")), QStringLiteral("Search"));
+    appBar->addAction(QMaterialSymbols::icon(QStringLiteral("more_vert")), QStringLiteral("More"));
+#endif
+    outer->addWidget(appBar);
+    // The pages, and a bottom navigation bar to go between them.
     auto *tabs = new QTabWidget;
-    tabs->tabBar()->setExpanding(true); // Material's primary tabs share the width
+    tabs->setTabPosition(QTabWidget::South);
+    tabs->tabBar()->setProperty("materialTabBar", QStringLiteral("navigationBar"));
     outer->addWidget(tabs);
     auto *controls = new QWidget;
     auto *layout = new QVBoxLayout(controls);
@@ -356,6 +370,12 @@ int main(int argc, char *argv[]) {
 #endif
     rows->addStretch(1);
     tabs->addTab(sizes, QStringLiteral("Sizes"));
+
+#ifdef HAVE_MATERIAL_SYMBOLS
+    const char *const destinations[] = {"home", "settings", "edit", "folder", "star"};
+    for (int i = 0; i < tabs->count() && i < 5; ++i)
+        tabs->setTabIcon(i, QMaterialSymbols::icon(QString::fromLatin1(destinations[i])));
+#endif
 
     window.show();
     return app.exec();
