@@ -2,7 +2,7 @@
 //
 // The Material 3 Expressive style of Nt (QMaterialStyle): buttons, a text field, check boxes, radio buttons,
 // switches, sliders, progress bars, tabs, combo boxes, menus, dialogs, a list, a button group, a split button, a
-// floating action button, a floating toolbar and button sizes, in a scheme made from a seed color, light or dark. With Qt, which has
+// floating action button, a floating toolbar, button sizes and text fields, in a scheme made from a seed color, light or dark. With Qt, which has
 // no such style, it builds and runs in the default style.
 #include <QApplication>
 #include <QCheckBox>
@@ -98,7 +98,7 @@ int main(int argc, char *argv[]) {
                      [&taps, count] { count->setText(QStringLiteral("Tapped %1").arg(++taps)); });
 
     auto *edit = new QLineEdit;
-    edit->setPlaceholderText(QStringLiteral("Outlined text field"));
+    edit->setProperty("materialLabel", QStringLiteral("Outlined text field"));
     layout->addWidget(edit);
 
     auto *check = new QCheckBox(QStringLiteral("Check box"));
@@ -253,6 +253,23 @@ int main(int argc, char *argv[]) {
     send->setMenu(others);
     send->setPopupMode(QToolButton::MenuButtonPopup);
     column->addWidget(send, 0, Qt::AlignLeft);
+    // A filled field with a line under it, and one that says what is wrong while it is not a number.
+    auto *name = new QLineEdit;
+    name->setProperty("materialTextField", QStringLiteral("filled"));
+    name->setProperty("materialLabel", QStringLiteral("Name"));
+    name->setProperty("materialSupportingText", QStringLiteral("As it is to be shown"));
+    column->addWidget(name);
+    auto *weight = new QLineEdit;
+    weight->setProperty("materialLabel", QStringLiteral("Weight in grams"));
+    weight->setProperty("materialError", QString()); // keeps the room for it
+    weight->setInputMethodHints(Qt::ImhDigitsOnly);
+    column->addWidget(weight);
+    QObject::connect(weight, &QLineEdit::textChanged, [weight](const QString &text) {
+        bool number = false;
+        text.toDouble(&number);
+        weight->setProperty("materialError",
+                            text.isEmpty() || number ? QString() : QStringLiteral("A weight is a number"));
+    });
     int sent = 0;
     QObject::connect(send, &QToolButton::clicked,
                      [&sent, send] { send->setText(QStringLiteral("Sent %1").arg(++sent)); });
@@ -273,7 +290,7 @@ int main(int argc, char *argv[]) {
     create->addAction(QStringLiteral("Reminder"));
     fab->setMenu(create);
     column->addWidget(fab, 0, Qt::AlignRight);
-    tabs->addTab(popups, QStringLiteral("Popups"));
+    tabs->addTab(popups, QStringLiteral("Input"));
 
     // A list that scrolls under a finger.
     auto *list = new QListWidget;
