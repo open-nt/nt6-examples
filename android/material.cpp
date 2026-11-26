@@ -2,7 +2,7 @@
 //
 // The Material 3 Expressive style of Nt (QMaterialStyle): buttons, a text field, check boxes, radio buttons,
 // switches, sliders, progress bars, tabs, combo boxes, menus, dialogs, a list, a button group, a split button, a
-// floating action button and a floating toolbar, in a scheme made from a seed color, light or dark. With Qt, which has
+// floating action button, a floating toolbar and button sizes, in a scheme made from a seed color, light or dark. With Qt, which has
 // no such style, it builds and runs in the default style.
 #include <QApplication>
 #include <QCheckBox>
@@ -286,6 +286,29 @@ int main(int argc, char *argv[]) {
         list->addItem(QString::fromLatin1(nut));
     QScroller::grabGesture(list->viewport(), QScroller::LeftMouseButtonGesture);
     tabs->addTab(list, QStringLiteral("Lists"));
+
+    // The five sizes of a button; the last is square, with corners that turn round while it is checked.
+    auto *sizes = new QWidget;
+    auto *rows = new QVBoxLayout(sizes);
+    rows->setContentsMargins(16, 16, 16, 16);
+    rows->setSpacing(16);
+    const std::pair<const char *, const char *> each[] = {{"extraSmall", "Extra small"},
+                                                         {"small", "Small"},
+                                                         {"medium", "Medium"},
+                                                         {"large", "Large"},
+                                                         {"extraLarge", "Huge"}};
+    for (const auto &[size, name] : each) {
+        auto *sized = button(QString::fromLatin1(name), "filled");
+        sized->setProperty("materialButtonSize", QString::fromLatin1(size));
+        rows->addWidget(sized, 0, Qt::AlignLeft);
+    }
+    auto *square = button(QStringLiteral("Square"), "tonal");
+    square->setProperty("materialButtonSize", QStringLiteral("large"));
+    square->setProperty("materialButtonShape", QStringLiteral("square"));
+    square->setCheckable(true);
+    rows->addWidget(square, 0, Qt::AlignLeft);
+    rows->addStretch(1);
+    tabs->addTab(sizes, QStringLiteral("Sizes"));
 
     window.show();
     return app.exec();
