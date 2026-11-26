@@ -1,8 +1,9 @@
 // MIT License - see LICENSE
 //
 // The Material 3 Expressive style of Nt (QMaterialStyle): buttons, a text field, check boxes, radio buttons,
-// switches, sliders, progress bars, tabs, combo boxes, menus, dialogs, a list, a button group, a split button and a floating action
-// button, in a scheme made from a seed color, light or dark. With Qt, which has no such style, it builds and runs in the default style.
+// switches, sliders, progress bars, tabs, combo boxes, menus, dialogs, a list, a button group, a split button, a
+// floating action button and a floating toolbar, in a scheme made from a seed color, light or dark. With Qt, which has
+// no such style, it builds and runs in the default style.
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -19,6 +20,7 @@
 #include <QSlider>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QToolBar>
 #include <QToolButton>
 #include <QStyleHints>
 #include <QVBoxLayout>
@@ -189,6 +191,15 @@ int main(int argc, char *argv[]) {
     indicators->addStretch(1);
     page->addLayout(indicators);
     page->addStretch(1);
+    // A floating toolbar, with choices that stay checked. It would go over the content of an editor.
+    auto *format = new QToolBar;
+    format->setProperty("materialToolBar", QStringLiteral("floating"));
+    for (const char *name : {"B", "I", "U"})
+        format->addAction(QString::fromLatin1(name))->setCheckable(true);
+    format->actions().first()->setChecked(true);
+    format->addSeparator();
+    format->addAction(QStringLiteral("Aa"));
+    page->addWidget(format, 0, Qt::AlignHCenter);
     tabs->addTab(more, QStringLiteral("More"));
 
     // A combo box, a menu and a dialog.
