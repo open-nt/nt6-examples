@@ -34,3 +34,7 @@ target_link_libraries(qt_multitouch PRIVATE Qt6::Widgets)
 # A QVulkanWindow that clears with Vulkan, without shaders.
 qt_add_executable(qt_vulkanwindow vulkanwindow.cpp)
 target_link_libraries(qt_vulkanwindow PRIVATE Qt6::Gui)
+
+# The Material 3 Expressive style of Nt.
+qt_add_executable(qt_material material.cpp)
+target_link_libraries(qt_material PRIVATE Qt6::Widgets)
