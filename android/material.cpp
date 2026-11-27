@@ -8,11 +8,11 @@
 // dark. With Qt, which has no such style, it builds and runs in the default style.
 #include <QApplication>
 #include <QCalendarWidget>
+#include <QCheckBox>
+#include <QComboBox>
 #include <QDate>
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QCheckBox>
-#include <QComboBox>
 #include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -20,7 +20,6 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMainWindow>
-#include <QStatusBar>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPlainTextEdit>
@@ -28,16 +27,18 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QResizeEvent>
+#include <QScrollArea>
 #include <QScroller>
 #include <QSlider>
 #include <QSpinBox>
+#include <QStatusBar>
+#include <QStyleHints>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTime>
 #include <QTimeEdit>
 #include <QToolBar>
 #include <QToolButton>
-#include <QStyleHints>
 #include <QVBoxLayout>
 #include <QWidget>
 #if __has_include(<QMaterialStyle>)
@@ -92,6 +93,20 @@ public:
 private:
     QTabWidget *m_tabs;
 };
+
+// A page that scrolls, under a finger as well, when the screen is too short for
+// it, as a phone in landscape.
+QScrollArea *scrolled(QWidget *page) {
+  auto *area = new QScrollArea;
+  area->setFrameShape(QFrame::NoFrame);
+  area->setWidgetResizable(true);
+  area->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  area->setWidget(page);
+  // The touch gesture sees the touches on the widgets of the page too; a finger
+  // that does not drag clicks.
+  QScroller::grabGesture(area->viewport(), QScroller::TouchGesture);
+  return area;
+}
 
 } // namespace
 
@@ -241,7 +256,7 @@ int main(int argc, char *argv[]) {
     contents->addWidget(new QLabel(QStringLiteral("Its layout holds what is in it.")));
     layout->addWidget(card);
     layout->addStretch(1);
-    tabs->addTab(controls, QStringLiteral("Controls"));
+    tabs->addTab(scrolled(controls), QStringLiteral("Controls"));
 
     // A slider that sets two progress bars, and a slider with steps.
     auto *more = new QWidget;
@@ -334,7 +349,7 @@ int main(int argc, char *argv[]) {
     format->addSeparator();
     format->addAction(QStringLiteral("Aa"));
     page->addWidget(format, 0, Qt::AlignHCenter);
-    tabs->addTab(more, QStringLiteral("More"));
+    tabs->addTab(scrolled(more), QStringLiteral("More"));
 
     // A combo box, a menu and a dialog.
     auto *popups = new QWidget;
@@ -461,7 +476,7 @@ int main(int argc, char *argv[]) {
     create->addAction(QStringLiteral("Reminder"));
     fab->setMenu(create);
     column->addWidget(fab, 0, Qt::AlignRight);
-    tabs->addTab(popups, QStringLiteral("Input"));
+    tabs->addTab(scrolled(popups), QStringLiteral("Input"));
 
     // A list that scrolls under a finger.
     auto *list = new QListWidget;
@@ -546,7 +561,7 @@ int main(int argc, char *argv[]) {
     rows->addLayout(icons);
 #endif
     rows->addStretch(1);
-    tabs->addTab(sizes, QStringLiteral("Sizes"));
+    tabs->addTab(scrolled(sizes), QStringLiteral("Sizes"));
 
 #ifdef HAVE_MATERIAL_SYMBOLS
     const char *const destinations[] = {"home", "settings", "edit", "folder", "star"};

@@ -35,9 +35,15 @@ target_link_libraries(qt_multitouch PRIVATE Qt6::Widgets)
 qt_add_executable(qt_vulkanwindow vulkanwindow.cpp)
 target_link_libraries(qt_vulkanwindow PRIVATE Qt6::Gui)
 
-# The Material 3 Expressive style of Nt.
-qt_add_executable(qt_material material.cpp)
+# The Material 3 Expressive style of Nt, with the Nt logo as its icon (an option of Nt's own; Qt takes the icon from
+# the resources of QT_ANDROID_PACKAGE_SOURCE_DIR).
+qt_add_executable(qt_material MANUAL_FINALIZATION material.cpp)
 target_link_libraries(qt_material PRIVATE Qt6::Widgets)
+if(ANDROID AND COMMAND nt_android_add_apk)
+    nt_android_add_apk(qt_material ICON nt-logo.png)
+else()
+    qt_finalize_target(qt_material)
+endif()
 # Google's icons, in a package of Nt's own whose icons are under Apache 2.0: with Nt, and if it is installed, the
 # gallery links with it and shows icon buttons. An application that does so has to follow that license.
 find_package(Nt6 QUIET)
