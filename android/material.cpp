@@ -3,9 +3,9 @@
 // The Material 3 Expressive style of Nt (QMaterialStyle): buttons, a text field, check boxes, radio buttons,
 // switches, sliders, progress bars, tabs, combo boxes, menus, dialogs, a list, a button group, a split button, a
 // floating action button, a floating toolbar, button sizes, text fields, icon buttons, a top app bar, a navigation
-// bar, a snackbar, circular progress, chips, a card, a divider, a date picker, badges, a drawer, a bottom sheet and,
-// on a wide screen, a navigation rail, in a scheme made from a seed color, light or dark. With Qt, which has no such
-// style, it builds and runs in the default style.
+// bar, a snackbar, circular progress, chips, a card, a divider, a date picker, badges, a drawer, a bottom sheet, a
+// group box, a text editor and, on a wide screen, a navigation rail, in a scheme made from a seed color, light or
+// dark. With Qt, which has no such style, it builds and runs in the default style.
 #include <QApplication>
 #include <QCalendarWidget>
 #include <QDate>
@@ -14,6 +14,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFrame>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -22,6 +23,7 @@
 #include <QStatusBar>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRadioButton>
@@ -595,6 +597,31 @@ int main(int argc, char *argv[]) {
         });
         QObject::connect(more->addAction(QStringLiteral("Show a message")), &QAction::triggered,
                          [snackbar] { snackbar->showMessage(QStringLiteral("From the overflow menu"), 4000); });
+        // A form with a checkable group box, which is a titled card, and a text editor of several lines.
+        QObject::connect(more->addAction(QStringLiteral("Feedback")), &QAction::triggered, [&window] {
+            QDialog dialog(&window);
+            dialog.setWindowTitle(QStringLiteral("Feedback"));
+            auto *rows = new QVBoxLayout(&dialog);
+            rows->setContentsMargins(24, 24, 24, 16);
+            rows->setSpacing(16);
+            auto *reply = new QGroupBox(QStringLiteral("Send me a reply"));
+            reply->setCheckable(true);
+            auto *choices = new QVBoxLayout(reply);
+            auto *byMail = new QRadioButton(QStringLiteral("By mail"));
+            byMail->setChecked(true);
+            choices->addWidget(byMail);
+            choices->addWidget(new QRadioButton(QStringLiteral("By phone")));
+            rows->addWidget(reply);
+            auto *text = new QPlainTextEdit;
+            text->setPlaceholderText(QStringLiteral("What should be better?"));
+            text->setMinimumHeight(120);
+            rows->addWidget(text);
+            auto *answers = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+            rows->addWidget(answers);
+            QObject::connect(answers, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+            QObject::connect(answers, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+            dialog.exec();
+        });
         QObject::connect(more->addAction(QStringLiteral("About")), &QAction::triggered, [&window] {
             QMessageBox::information(&window, QStringLiteral("Material 3"),
                                      QStringLiteral("The Material style of Nt, in a Qt Widgets application."));
