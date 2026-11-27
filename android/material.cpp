@@ -28,6 +28,7 @@
 #include <QResizeEvent>
 #include <QScroller>
 #include <QSlider>
+#include <QSpinBox>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTime>
@@ -414,6 +415,11 @@ int main(int argc, char *argv[]) {
     weight->setProperty("materialError", QString()); // keeps the room for it
     weight->setInputMethodHints(Qt::ImhDigitsOnly);
     column->addWidget(weight);
+    // A spin box: an outlined field with a button each way.
+    auto *howMany = new QSpinBox;
+    howMany->setRange(0, 99);
+    howMany->setSuffix(QStringLiteral(" nuts"));
+    column->addWidget(howMany);
     QObject::connect(weight, &QLineEdit::textChanged, [weight](const QString &text) {
         bool number = false;
         text.toDouble(&number);
@@ -571,6 +577,28 @@ int main(int argc, char *argv[]) {
         rows->addWidget(go);
         QObject::connect(go, &QPushButton::clicked, &sheet, &QDialog::accept);
         sheet.exec();
+    });
+#endif
+
+#ifdef HAVE_MATERIAL_SYMBOLS
+    // The three dots open the overflow menu, under them.
+    QObject::connect(overflow, &QAction::triggered, [&window, appBar, overflow, tabs, snackbar] {
+        QWidget *dots = appBar->widgetForAction(overflow);
+        if (!dots)
+            return;
+        auto *more = new QMenu(&window);
+        QObject::connect(more, &QMenu::aboutToHide, more, &QObject::deleteLater);
+        QObject::connect(more->addAction(QStringLiteral("Clear badges")), &QAction::triggered, [tabs, dots] {
+            tabs->tabBar()->setProperty("materialBadges", QVariantList());
+            dots->setProperty("materialBadge", false);
+        });
+        QObject::connect(more->addAction(QStringLiteral("Show a message")), &QAction::triggered,
+                         [snackbar] { snackbar->showMessage(QStringLiteral("From the overflow menu"), 4000); });
+        QObject::connect(more->addAction(QStringLiteral("About")), &QAction::triggered, [&window] {
+            QMessageBox::information(&window, QStringLiteral("Material 3"),
+                                     QStringLiteral("The Material style of Nt, in a Qt Widgets application."));
+        });
+        more->popup(dots->mapToGlobal(QPoint(dots->width() - more->sizeHint().width(), dots->height())));
     });
 #endif
 
