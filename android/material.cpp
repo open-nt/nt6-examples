@@ -238,6 +238,7 @@ int main(int argc, char *argv[]) {
         return b;
     };
     auto *assist = chip("assist", QStringLiteral("Share"));
+    assist->setProperty("materialChipElevated", true);
 #ifdef HAVE_MATERIAL_SYMBOLS
     assist->setIcon(QMaterialSymbols::icon(QStringLiteral("share")));
 #else
@@ -446,6 +447,7 @@ int main(int argc, char *argv[]) {
     auto *howMany = new QSpinBox;
     howMany->setRange(0, 99);
     howMany->setSuffix(QStringLiteral(" nuts"));
+    howMany->setProperty("materialLabel", QStringLiteral("How many"));
     column->addWidget(howMany);
     QObject::connect(weight, &QLineEdit::textChanged, [weight](const QString &text) {
         bool number = false;
