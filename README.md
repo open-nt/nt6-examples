@@ -59,6 +59,7 @@ elsewhere, pass `-DCMAKE_PREFIX_PATH=<prefix>`.
 | `httpserver/` | `hello_server`                               | A small web service                                           |
 | `dbus/`       | `dbus_clock`                                 | A clock on the D-Bus session bus                              |
 | `gpio/`       | `ptt`                                        | A push-to-talk switch on a GPIO line                          |
+| `zephyr/displays/` | `nt_displays`                          | A GPIO-button menu on an SSD1322 OLED, an HD44780 LCD; Zephyr or Linux (ntdisplayemu) |
 | `gamepad/`    | `gamepadinfo`                                | What the gamepads do                                          |
 | `gltf/`       | `gltfinfo`                                   | What a glTF file holds                                        |
 | `multimedia/` | `audiodevices`, `audioplayer`, `decoder`, `recorder`, `camera`, `viewfinder` | Audio devices and playback, decoding, recording, the camera |

@@ -1,0 +1,20 @@
+# MIT License - see LICENSE
+
+mainmenu "Nt headset sample"
+
+config APP_MIC_IMPEDANCE
+	int "Impedance of the headset microphone, in ohms"
+	default 2200
+	help
+	  Below 1000 ohms the microphone is taken to be dynamic (no bias, more gain); from 1000 up an
+	  electret capsule (bias, less gain). 0 leaves the codec's settings as they are.
+
+config APP_MIC_GAIN
+	int "Microphone gain in dB, or -100 for what suits the impedance"
+	default -100
+
+config APP_SIDETONE
+	bool "Play the microphone back on the headphones"
+	default y
+
+source "Kconfig.zephyr"

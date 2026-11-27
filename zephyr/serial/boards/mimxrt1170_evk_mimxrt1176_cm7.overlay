@@ -1,0 +1,11 @@
+/* MIT License - see LICENSE */
+
+/*
+ * LPUART2, on D0 and D1 of the Arduino header, in the loopback mode of the LPUART: its receiver reads its own
+ * transmitter, so the example needs no wiring. Delete nxp,loopback to talk to a device on D0 (RX) and D1 (TX).
+ */
+&lpuart2 {
+	status = "okay";
+	current-speed = <115200>;
+	nxp,loopback;
+};

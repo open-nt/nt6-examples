@@ -8,6 +8,51 @@
 // The CMake target `widget_images` runs it into doc/images. The PNG encoder at the top is all there is to it: Nt has
 // no image file support yet.
 #include <QApplication>
+#include <QCalendarWidget>
+#include <QColorDialog>
+#include <QColumnView>
+#include <QCommandLinkButton>
+#include <QDateTimeEdit>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDockWidget>
+#include <QDoubleSpinBox>
+#include <QErrorMessage>
+#include <QFileDialog>
+#include <QFocusFrame>
+#include <QFontComboBox>
+#include <QFontDialog>
+#include <QGraphicsEllipseItem>
+#include <QGraphicsRectItem>
+#include <QGraphicsScene>
+#include <QGraphicsSimpleTextItem>
+#include <QGraphicsView>
+#include <QInputDialog>
+#include <QKeySequenceEdit>
+#include <QListView>
+#include <QMainWindow>
+#include <QMdiArea>
+#include <QMdiSubWindow>
+#include <QMessageBox>
+#include <QPainter>
+#include <QPixmap>
+#include <QProgressDialog>
+#include <QRubberBand>
+#include <QSizeGrip>
+#include <QSplashScreen>
+#include <QStandardItemModel>
+#include <QStringListModel>
+#include <QTabBar>
+#include <QTableView>
+#include <QTextBrowser>
+#include <QTextEdit>
+#include <QToolBar>
+#include <QToolBox>
+#include <QTreeView>
+#include <QTreeWidget>
+#include <QUndoStack>
+#include <QUndoView>
+#include <QWizard>
 #include <QAction>
 #include <QActionGroup>
 #include <QCheckBox>
@@ -54,6 +99,7 @@
 #include <vector>
 
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 
@@ -946,6 +992,546 @@ bool tableWidgets(const std::string &dir) {
     return picture(w, table, dir, "qtablewidget");
 }
 
+// ---- Pictures of the classes added since the first set: item views, windows, dialogs and the rest ----
+
+// A model of a small project tree, for the tree and column views.
+QStandardItemModel *projectModel(QObject *parent) {
+    auto *model = new QStandardItemModel(0, 2, parent);
+    model->setHorizontalHeaderLabels({"Name", "Size"});
+    auto add = [](QStandardItem *under, const char *name, const char *size) {
+        auto *item = new QStandardItem(name);
+        under->appendRow({item, new QStandardItem(size)});
+        return item;
+    };
+    QStandardItem *root = model->invisibleRootItem();
+    QStandardItem *src = add(root, "src", "");
+    add(src, "main.cpp", "2 KB");
+    add(src, "window.cpp", "14 KB");
+    add(src, "window.h", "3 KB");
+    QStandardItem *doc = add(root, "doc", "");
+    add(doc, "index.html", "6 KB");
+    add(root, "CMakeLists.txt", "1 KB");
+    add(root, "README.md", "4 KB");
+    return model;
+}
+
+// A model of the staff list, for the table view.
+QStandardItemModel *staffModel(QObject *parent) {
+    auto *model = new QStandardItemModel(0, 3, parent);
+    model->setHorizontalHeaderLabels({"Name", "Role", "Status"});
+    const char *rows[][3] = {{"Ada", "Engineer", "Active"},    {"Grace", "Admiral", "Active"},
+                             {"Linus", "Maintainer", "Away"},  {"Margaret", "Director", "Active"},
+                             {"Dennis", "Researcher", "Away"}, {"Barbara", "Professor", "Active"}};
+    for (const auto &row : rows)
+        model->appendRow({new QStandardItem(row[0]), new QStandardItem(row[1]), new QStandardItem(row[2])});
+    return model;
+}
+
+bool treeViews(const std::string &dir) {
+    QWidget &w = *host(300, 260);
+    auto *view = new QTreeView(&w);
+    view->setModel(projectModel(view));
+    view->expandAll();
+    view->setColumnWidth(0, 170);
+    view->setCurrentIndex(view->model()->index(1, 0, view->model()->index(0, 0)));
+    w.layout()->addWidget(view);
+    return picture(w, view, dir, "qtreeview");
+}
+
+bool treeWidgets(const std::string &dir) {
+    QWidget &w = *host(300, 220);
+    auto *tree = new QTreeWidget(&w);
+    tree->setHeaderLabels({"Task", "Owner"});
+    auto *release = new QTreeWidgetItem(tree, QStringList{"Release 6.0", "Ada"});
+    new QTreeWidgetItem(release, QStringList{"Write the notes", "Grace"});
+    auto *build = new QTreeWidgetItem(release, QStringList{"Build the packages", "Linus"});
+    new QTreeWidgetItem(build, QStringList{"amd64", "Linus"});
+    new QTreeWidgetItem(build, QStringList{"arm64", "Ken"});
+    auto *later = new QTreeWidgetItem(tree, QStringList{"Later", ""});
+    new QTreeWidgetItem(later, QStringList{"Native dialogs", "Dennis"});
+    tree->expandItem(release);
+    tree->expandItem(build);
+    tree->setColumnWidth(0, 180);
+    tree->setCurrentItem(build);
+    w.layout()->addWidget(tree);
+    return picture(w, tree, dir, "qtreewidget");
+}
+
+bool listViews(const std::string &dir) {
+    QWidget &w = *host(380, 210, QBoxLayout::LeftToRight);
+    auto *model = new QStringListModel({"Inbox", "Drafts", "Sent", "Archive", "Spam", "Trash", "Projects"}, &w);
+    auto *list = new QListView(&w);
+    list->setModel(model);
+    list->setCurrentIndex(model->index(1, 0));
+    auto *icons = new QListView(&w);
+    icons->setViewMode(QListView::IconMode);
+    icons->setModel(model);
+    w.layout()->addWidget(list);
+    w.layout()->addWidget(icons);
+    return picture(w, list, dir, "qlistview");
+}
+
+bool tableViews(const std::string &dir) {
+    QWidget &w = *host(400, 250);
+    auto *view = new QTableView(&w);
+    view->setModel(staffModel(view));
+    view->setColumnWidth(0, 100);
+    view->setColumnWidth(1, 110);
+    view->horizontalHeader()->setStretchLastSection(true);
+    view->setSortingEnabled(true);
+    view->sortByColumn(0, Qt::AscendingOrder);
+    view->setCurrentIndex(view->model()->index(2, 1));
+    w.layout()->addWidget(view);
+    return picture(w, view, dir, "qtableview");
+}
+
+bool columnViews(const std::string &dir) {
+    QWidget &w = *host(420, 180);
+    auto *view = new QColumnView(&w);
+    QStandardItemModel *model = projectModel(view);
+    view->setModel(model);
+    view->setCurrentIndex(model->index(1, 0, model->index(0, 0)));
+    w.layout()->addWidget(view);
+    return picture(w, view, dir, "qcolumnview");
+}
+
+bool undoViews(const std::string &dir) {
+    QWidget &w = *host(240, 170);
+    auto *stack = new QUndoStack(&w);
+    for (const char *text : {"Type \"Hello\"", "Make bold", "Insert picture", "Delete line"}) {
+        auto *command = new QUndoCommand(text);
+        stack->push(command);
+    }
+    stack->undo();
+    auto *view = new QUndoView(stack, &w);
+    w.layout()->addWidget(view);
+    return picture(w, nullptr, dir, "qundoview");
+}
+
+bool textEdits(const std::string &dir) {
+    QWidget &w = *host(320, 170);
+    auto *edit = new QTextEdit(&w);
+    edit->setHtml("<h3>Rich text</h3><p>A QTextEdit shows <b>bold</b>, <i>italic</i> and "
+                  "<span style=\"color:#b04010\">colored</span> text, and lists:</p>"
+                  "<ul><li>from HTML</li><li>or Markdown</li></ul>");
+    w.layout()->addWidget(edit);
+    return picture(w, edit, dir, "qtextedit");
+}
+
+bool textBrowsers(const std::string &dir) {
+    QWidget &w = *host(320, 190);
+    auto *browser = new QTextBrowser(&w);
+    browser->setHtml("<h3>Help</h3><p>A QTextBrowser follows its links: see "
+                     "<a href=\"#layouts\">Layouts</a> or <a href=\"#widgets\">The Widgets</a>.</p>"
+                     "<p>It is read-only, and the keys scroll it.</p>");
+    w.layout()->addWidget(browser);
+    return picture(w, nullptr, dir, "qtextbrowser");
+}
+
+bool calendars(const std::string &dir) {
+    QWidget &w = *host(10, 10);
+    auto *calendar = new QCalendarWidget(&w);
+    calendar->setSelectedDate(QDate(2026, 11, 13));
+    calendar->setCurrentPage(2026, 11);
+    w.layout()->addWidget(calendar);
+    w.resize(w.sizeHint().expandedTo(QSize(300, 0)));
+    return picture(w, nullptr, dir, "qcalendarwidget");
+}
+
+bool dateTimeEdits(const std::string &dir) {
+    QWidget &w = *host(240, 10);
+    auto *layout = static_cast<QBoxLayout *>(w.layout());
+    auto *both = new QDateTimeEdit(QDateTime(QDate(2026, 11, 13), QTime(9, 30)), &w);
+    auto *date = new QDateEdit(QDate(2026, 11, 13), &w);
+    auto *time = new QTimeEdit(QTime(17, 45), &w);
+    auto *disabled = new QDateEdit(QDate(2026, 1, 1), &w);
+    disabled->setEnabled(false);
+    for (QWidget *edit : std::initializer_list<QWidget *>{both, date, time, disabled})
+        layout->addWidget(edit);
+    w.resize(240, w.sizeHint().height());
+    return picture(w, date, dir, "qdatetimeedit");
+}
+
+bool doubleSpinBoxes(const std::string &dir) {
+    QWidget &w = *host(200, 10);
+    auto *layout = static_cast<QBoxLayout *>(w.layout());
+    auto *plain = new QDoubleSpinBox(&w);
+    plain->setValue(3.14);
+    auto *focused = new QDoubleSpinBox(&w);
+    focused->setDecimals(1);
+    focused->setSuffix(" kg");
+    focused->setValue(72.5);
+    auto *prefixed = new QDoubleSpinBox(&w);
+    prefixed->setRange(-10, 10);
+    prefixed->setPrefix("Gain ");
+    prefixed->setValue(-1.25);
+    auto *disabled = new QDoubleSpinBox(&w);
+    disabled->setValue(0.5);
+    disabled->setEnabled(false);
+    for (QDoubleSpinBox *s : {plain, focused, prefixed, disabled})
+        layout->addWidget(s);
+    w.resize(200, w.sizeHint().height());
+    return picture(w, focused, dir, "qdoublespinbox");
+}
+
+bool fontComboBoxes(const std::string &dir) {
+    QWidget &w = *host(240, 10);
+    auto *layout = static_cast<QBoxLayout *>(w.layout());
+    auto *fonts = new QFontComboBox(&w);
+    auto *disabled = new QFontComboBox(&w);
+    disabled->setEnabled(false);
+    layout->addWidget(fonts);
+    layout->addWidget(disabled);
+    w.resize(240, w.sizeHint().height());
+    return picture(w, fonts, dir, "qfontcombobox");
+}
+
+bool keySequenceEdits(const std::string &dir) {
+    QWidget &w = *host(220, 10);
+    auto *layout = static_cast<QBoxLayout *>(w.layout());
+    auto *empty = new QKeySequenceEdit(&w);
+    auto *save = new QKeySequenceEdit(QKeySequence("Ctrl+S"), &w);
+    auto *chord = new QKeySequenceEdit(QKeySequence("Ctrl+Shift+P"), &w);
+    for (QKeySequenceEdit *e : {empty, save, chord})
+        layout->addWidget(e);
+    w.resize(220, w.sizeHint().height());
+    return picture(w, nullptr, dir, "qkeysequenceedit");
+}
+
+bool commandLinkButtons(const std::string &dir) {
+    QWidget &w = *host(320, 10);
+    auto *layout = static_cast<QBoxLayout *>(w.layout());
+    auto *install = new QCommandLinkButton("Install now", "Uses the recommended settings.", &w);
+    auto *custom = new QCommandLinkButton("Customize", "Choose the parts to install and where.", &w);
+    auto *disabled = new QCommandLinkButton("Repair", "Nothing is installed yet.", &w);
+    disabled->setEnabled(false);
+    for (QCommandLinkButton *b : {install, custom, disabled})
+        layout->addWidget(b);
+    w.resize(320, w.sizeHint().height());
+    return picture(w, install, dir, "qcommandlinkbutton");
+}
+
+bool tabBars(const std::string &dir) {
+    QWidget &w = *host(320, 10);
+    auto *layout = static_cast<QBoxLayout *>(w.layout());
+    auto *plain = new QTabBar(&w);
+    for (const char *name : {"main.cpp", "window.cpp", "window.h"})
+        plain->addTab(name);
+    plain->setCurrentIndex(1);
+    auto *closable = new QTabBar(&w);
+    closable->setTabsClosable(true);
+    for (const char *name : {"Inbox", "Drafts", "Disabled"})
+        closable->addTab(name);
+    closable->setTabEnabled(2, false);
+    layout->addWidget(plain);
+    layout->addWidget(closable);
+    w.resize(320, w.sizeHint().height());
+    return picture(w, nullptr, dir, "qtabbar");
+}
+
+bool toolBoxes(const std::string &dir) {
+    QWidget &w = *host(240, 230);
+    auto *box = new QToolBox(&w);
+    for (const char *name : {"Shapes", "Colors", "Text"}) {
+        auto *page = new QWidget;
+        auto *column = new QVBoxLayout(page);
+        column->addWidget(new QCheckBox(QString("Show %1").arg(QString(name).toLower()), page));
+        column->addWidget(new QPushButton("Reset", page));
+        column->addStretch();
+        box->addItem(page, name);
+    }
+    box->setItemEnabled(2, false);
+    w.layout()->addWidget(box);
+    return picture(w, nullptr, dir, "qtoolbox");
+}
+
+bool dialogButtonBoxes(const std::string &dir) {
+    QWidget &w = *host(340, 10);
+    auto *layout = static_cast<QBoxLayout *>(w.layout());
+    auto *okCancel = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &w);
+    auto *save =
+        new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Discard | QDialogButtonBox::Cancel, &w);
+    auto *help = new QDialogButtonBox(QDialogButtonBox::Apply | QDialogButtonBox::Close | QDialogButtonBox::Help, &w);
+    for (QDialogButtonBox *b : {okCancel, save, help})
+        layout->addWidget(b);
+    w.resize(340, w.sizeHint().height());
+    return picture(w, nullptr, dir, "qdialogbuttonbox");
+}
+
+bool graphicsViews(const std::string &dir) {
+    QWidget &w = *host(300, 200);
+    auto *scene = new QGraphicsScene(0, 0, 260, 160, &w);
+    scene->addRect(20, 20, 90, 60, QPen(QColor(40, 90, 160), 2), QBrush(QColor(170, 200, 240)));
+    scene->addEllipse(130, 40, 100, 80, QPen(QColor(190, 70, 20), 2), QBrush(QColor(255, 210, 160)));
+    scene->addLine(20, 130, 240, 110, QPen(QColor(30, 130, 80), 3));
+    QGraphicsSimpleTextItem *text = scene->addSimpleText("A scene");
+    text->setPos(30, 90);
+    auto *view = new QGraphicsView(scene, &w);
+    w.layout()->addWidget(view);
+    return picture(w, nullptr, dir, "qgraphicsview");
+}
+
+bool mdiAreas(const std::string &dir) {
+    QWidget &w = *host(380, 240);
+    auto *area = new QMdiArea(&w);
+    for (const char *name : {"notes.txt", "todo.txt", "log.txt"}) {
+        auto *edit = new QPlainTextEdit(QString("The document %1.").arg(name));
+        QMdiSubWindow *sub = area->addSubWindow(edit);
+        sub->setWindowTitle(name);
+        sub->resize(200, 120);
+    }
+    w.layout()->addWidget(area);
+    w.show();
+    QCoreApplication::processEvents();
+    area->tileSubWindows();
+    return picture(w, nullptr, dir, "qmdiarea");
+}
+
+bool mainWindows(const std::string &dir) {
+    auto *window = new QMainWindow;
+    window->setWindowTitle("Editor");
+    QMenuBar *bar = window->menuBar();
+    bar->addMenu("&File");
+    bar->addMenu("&Edit");
+    bar->addMenu("&View");
+    QToolBar *tools = window->addToolBar("Tools");
+    for (const char *name : {"New", "Open", "Save"})
+        tools->addAction(name);
+    tools->addSeparator();
+    tools->addAction("Find");
+    auto *dock = new QDockWidget("Files", window);
+    auto *files = new QListWidget(dock);
+    files->addItems({"main.cpp", "window.cpp", "window.h", "README.md"});
+    files->setCurrentRow(1);
+    dock->setWidget(files);
+    dock->setMaximumWidth(150);
+    window->addDockWidget(Qt::LeftDockWidgetArea, dock);
+    auto *edit = new QPlainTextEdit(window);
+    edit->setPlainText("#include \"window.h\"\n\nWindow::Window(QWidget *parent)\n    : QMainWindow(parent) {\n}\n");
+    window->setCentralWidget(edit);
+    window->statusBar()->showMessage("Ready");
+    window->resize(520, 280);
+    return picture(*window, nullptr, dir, "qmainwindow");
+}
+
+bool dockWidgets(const std::string &dir) {
+    auto *window = new QMainWindow;
+    auto *left = new QDockWidget("Files", window);
+    auto *files = new QListWidget(left);
+    files->addItems({"main.cpp", "window.cpp", "window.h"});
+    left->setWidget(files);
+    left->setMaximumWidth(140);
+    auto *right = new QDockWidget("Properties", window);
+    auto *form = new QWidget(right);
+    auto *formLayout = new QFormLayout(form);
+    formLayout->addRow("Width:", new QSpinBox(form));
+    formLayout->addRow("Visible:", new QCheckBox(form));
+    right->setWidget(form);
+    right->setMaximumWidth(170);
+    window->addDockWidget(Qt::LeftDockWidgetArea, left);
+    window->addDockWidget(Qt::RightDockWidgetArea, right);
+    auto *centre = new QLabel("The central widget", window);
+    centre->setAlignment(Qt::AlignCenter);
+    centre->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
+    window->setCentralWidget(centre);
+    window->resize(520, 200);
+    return picture(*window, nullptr, dir, "qdockwidget");
+}
+
+bool toolBars(const std::string &dir) {
+    QWidget &w = *host(360, 10);
+    auto *layout = static_cast<QBoxLayout *>(w.layout());
+    auto *bar = new QToolBar("Edit", &w);
+    for (const char *name : {"Cut", "Copy", "Paste"})
+        bar->addAction(name);
+    bar->addSeparator();
+    QAction *bold = bar->addAction("Bold");
+    bold->setCheckable(true);
+    bold->setChecked(true);
+    bar->addAction("Undo")->setEnabled(false);
+    auto *zoom = new QComboBox;
+    zoom->addItems({"100 %", "150 %", "200 %"});
+    bar->addWidget(zoom);
+    layout->addWidget(bar);
+    w.resize(360, w.sizeHint().height());
+    return picture(w, nullptr, dir, "qtoolbar");
+}
+
+bool rubberBands(const std::string &dir) {
+    QWidget &w = *host(260, 140);
+    auto *area = new QFrame(&w);
+    area->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
+    w.layout()->addWidget(area);
+    w.show();
+    QCoreApplication::processEvents();
+    auto *rectangle = new QRubberBand(QRubberBand::Rectangle, area);
+    rectangle->setGeometry(20, 20, 130, 70);
+    rectangle->show();
+    auto *line = new QRubberBand(QRubberBand::Line, area);
+    line->setGeometry(175, 15, 2, 90);
+    line->show();
+    return picture(w, nullptr, dir, "qrubberband");
+}
+
+bool sizeGrips(const std::string &dir) {
+    QWidget &w = *host(260, 90);
+    auto *layout = static_cast<QBoxLayout *>(w.layout());
+    layout->addWidget(new QLabel("Drag the grip in the corner to resize the window.", &w));
+    layout->addStretch();
+    layout->addWidget(new QSizeGrip(&w), 0, Qt::AlignRight | Qt::AlignBottom);
+    return picture(w, nullptr, dir, "qsizegrip");
+}
+
+bool focusFrames(const std::string &dir) {
+    QWidget &w = *host(240, 10);
+    auto *layout = static_cast<QBoxLayout *>(w.layout());
+    auto *name = new QLineEdit("Ada Lovelace", &w);
+    auto *role = new QLineEdit("Engineer", &w);
+    layout->addWidget(name);
+    layout->addWidget(role);
+    w.resize(240, w.sizeHint().height());
+    auto *frame = new QFocusFrame(&w);
+    frame->setWidget(role);
+    return picture(w, role, dir, "qfocusframe");
+}
+
+bool splashScreens(const std::string &dir) {
+    QPixmap pixmap(320, 160);
+    pixmap.fill(QColor(30, 60, 100));
+    {
+        QPainter painter(&pixmap);
+        painter.setPen(Qt::white);
+        QFont font = painter.font();
+        font.setPointSize(20);
+        font.setBold(true);
+        painter.setFont(font);
+        painter.drawText(QRect(0, 30, 320, 50), Qt::AlignCenter, "My Application");
+    }
+    auto *splash = new QSplashScreen(pixmap);
+    splash->showMessage("Loading the plugins...", Qt::AlignBottom | Qt::AlignHCenter, Qt::white);
+    return picture(*splash, nullptr, dir, "qsplashscreen");
+}
+
+// Dialogs: each is a window of its own, so it is its own host.
+bool dialogs(const std::string &dir) {
+    auto *dialog = new QDialog;
+    dialog->setWindowTitle("Rename");
+    auto *layout = new QVBoxLayout(dialog);
+    layout->addWidget(new QLabel("New name:", dialog));
+    layout->addWidget(new QLineEdit("report-final.txt", dialog));
+    layout->addWidget(new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog));
+    dialog->resize(QSize(280, 0).expandedTo(dialog->sizeHint()));
+    return picture(*dialog, nullptr, dir, "qdialog");
+}
+
+bool messageBoxes(const std::string &dir) {
+    auto *box = new QMessageBox(QMessageBox::Question, "Save", "The document has been changed.",
+                                QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+    box->setInformativeText("Do you want to save your changes?");
+    box->resize(box->sizeHint());
+    return picture(*box, nullptr, dir, "qmessagebox");
+}
+
+bool inputDialogs(const std::string &dir) {
+    auto *dialog = new QInputDialog;
+    dialog->setWindowTitle("Rename");
+    dialog->setLabelText("New name:");
+    dialog->setTextValue("report-final.txt");
+    dialog->resize(QSize(280, 0).expandedTo(dialog->sizeHint()));
+    return picture(*dialog, nullptr, dir, "qinputdialog");
+}
+
+bool progressDialogs(const std::string &dir) {
+    auto *dialog = new QProgressDialog("Copying the files...", "Cancel", 0, 100);
+    dialog->setValue(40);
+    dialog->resize(QSize(300, 0).expandedTo(dialog->sizeHint()));
+    return picture(*dialog, nullptr, dir, "qprogressdialog");
+}
+
+bool errorMessages(const std::string &dir) {
+    auto *dialog = new QErrorMessage;
+    dialog->showMessage("The file could not be opened: permission denied.");
+    dialog->resize(460, dialog->sizeHint().height());
+    return picture(*dialog, nullptr, dir, "qerrormessage");
+}
+
+bool colorDialogs(const std::string &dir) {
+    auto *dialog = new QColorDialog(QColor(40, 120, 200));
+    dialog->resize(dialog->sizeHint());
+    return picture(*dialog, nullptr, dir, "qcolordialog");
+}
+
+bool fontDialogs(const std::string &dir) {
+    auto *dialog = new QFontDialog;
+    dialog->resize(560, 340);
+    return picture(*dialog, nullptr, dir, "qfontdialog");
+}
+
+// The file dialog lists a directory of its own, so that the picture is the same on every machine.
+bool fileDialogs(const std::string &dir) {
+    const std::string base = "/tmp/Documents";
+    if (::mkdir(base.c_str(), 0755) != 0) {
+        std::fprintf(stderr, "render_widgets: %s is in the way\n", base.c_str());
+        return false;
+    }
+    ::mkdir((base + "/docs").c_str(), 0755);
+    ::mkdir((base + "/pictures").c_str(), 0755);
+    for (const char *name : {"notes.txt", "report.txt", "todo.txt"})
+        if (std::FILE *file = std::fopen((base + "/" + name).c_str(), "w"))
+            std::fclose(file);
+    auto *dialog = new QFileDialog(nullptr, "Open File", QString::fromStdString(base), "Text files (*.txt)");
+    dialog->resize(QSize(460, 300).expandedTo(dialog->sizeHint()));
+    const bool ok = picture(*dialog, nullptr, dir, "qfiledialog");
+    for (const char *name : {"notes.txt", "report.txt", "todo.txt"})
+        std::remove((base + "/" + name).c_str());
+    ::rmdir((base + "/docs").c_str());
+    ::rmdir((base + "/pictures").c_str());
+    ::rmdir(base.c_str());
+    return ok;
+}
+
+bool wizards(const std::string &dir) {
+    auto *wizard = new QWizard;
+    wizard->setWindowTitle("New Project");
+    auto *intro = new QWizardPage;
+    intro->setTitle("Introduction");
+    intro->setSubTitle("This wizard makes a new project.");
+    auto *details = new QWizardPage;
+    details->setTitle("Project Details");
+    details->setSubTitle("Give the project a name and choose where it goes.");
+    auto *form = new QFormLayout(details);
+    form->addRow("Name:", new QLineEdit("hello", details));
+    form->addRow("Folder:", new QLineEdit("~/projects/hello", details));
+    form->addRow(new QCheckBox("Make a git repository", details));
+    wizard->addPage(intro);
+    wizard->addPage(details);
+    wizard->resize(QSize(440, 280).expandedTo(wizard->sizeHint()));
+    wizard->show();
+    QCoreApplication::processEvents();
+    wizard->next();
+    return picture(*wizard, nullptr, dir, "qwizard");
+}
+
+// Lets fontconfig see only the families the pictures are drawn with, so that the font dialog and the font combo box
+// list the same fonts on every machine rather than the ones installed on this one.
+void restrictFonts() {
+    if (std::getenv("FONTCONFIG_FILE"))
+        return;
+    static const std::string path = "/tmp/render_widgets_fonts.conf";
+    std::FILE *file = std::fopen(path.c_str(), "w");
+    if (!file)
+        return;
+    std::fputs("<?xml version=\"1.0\"?>\n<!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">\n<fontconfig>\n"
+               "  <include ignore_missing=\"yes\">/etc/fonts/fonts.conf</include>\n  <selectfont>\n    <acceptfont>\n",
+               file);
+    for (const char *family : {"Noto Sans", "Noto Serif", "Noto Sans Mono", "DejaVu Sans", "DejaVu Serif",
+                               "DejaVu Sans Mono", "Liberation Sans", "Liberation Serif", "Liberation Mono"})
+        std::fprintf(file, "      <pattern><patelt name=\"family\"><string>%s</string></patelt></pattern>\n", family);
+    std::fputs("    </acceptfont>\n    <rejectfont><pattern/></rejectfont>\n  </selectfont>\n</fontconfig>\n", file);
+    std::fclose(file);
+    ::setenv("FONTCONFIG_FILE", path.c_str(), 1);
+}
+
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -956,6 +1542,7 @@ int main(int argc, char *argv[]) {
     // The pictures do not depend on the machine: no display, and sizes in units of one pixel.
     ::setenv("QT_QPA_PLATFORM", "offscreen", 1);
     ::setenv("QT_SCALE_FACTOR", "1", 1);
+    restrictFonts();
     QApplication app(argc, argv);
     app.styleHints()->setColorScheme(Qt::ColorScheme::Light);
 
@@ -963,11 +1550,70 @@ int main(int argc, char *argv[]) {
     ::mkdir(directory.c_str(), 0755);
     ::mkdir((directory + "/widgets").c_str(), 0755);
     bool ok = true;
-    for (bool (*render)(const std::string &) :
-         {labels,     pushButtons, checkBoxes,  radioButtons,   lineEdits,   sliders,     progressBars,   spinBoxes,
-          comboBoxes, groupBoxes,  tabWidgets,  frames,         gridLayouts, formLayouts, stackedWidgets, toolTips,
-          scrollBars, scrollAreas, listWidgets, plainTextEdits, headerViews, toolButtons, dials,          lcdNumbers,
-          splitters,  statusBars,  menus,       menuBars,       tableWidgets})
+    for (bool (*render)(const std::string &) : {labels,
+                                                pushButtons,
+                                                checkBoxes,
+                                                radioButtons,
+                                                lineEdits,
+                                                sliders,
+                                                progressBars,
+                                                spinBoxes,
+                                                comboBoxes,
+                                                groupBoxes,
+                                                tabWidgets,
+                                                frames,
+                                                gridLayouts,
+                                                formLayouts,
+                                                stackedWidgets,
+                                                toolTips,
+                                                scrollBars,
+                                                scrollAreas,
+                                                listWidgets,
+                                                plainTextEdits,
+                                                headerViews,
+                                                toolButtons,
+                                                dials,
+                                                lcdNumbers,
+                                                splitters,
+                                                statusBars,
+                                                menus,
+                                                menuBars,
+                                                tableWidgets,
+                                                treeViews,
+                                                treeWidgets,
+                                                listViews,
+                                                tableViews,
+                                                columnViews,
+                                                undoViews,
+                                                textEdits,
+                                                textBrowsers,
+                                                calendars,
+                                                dateTimeEdits,
+                                                doubleSpinBoxes,
+                                                fontComboBoxes,
+                                                keySequenceEdits,
+                                                commandLinkButtons,
+                                                tabBars,
+                                                toolBoxes,
+                                                dialogButtonBoxes,
+                                                graphicsViews,
+                                                mdiAreas,
+                                                mainWindows,
+                                                dockWidgets,
+                                                toolBars,
+                                                rubberBands,
+                                                sizeGrips,
+                                                focusFrames,
+                                                splashScreens,
+                                                dialogs,
+                                                messageBoxes,
+                                                inputDialogs,
+                                                progressDialogs,
+                                                errorMessages,
+                                                colorDialogs,
+                                                fontDialogs,
+                                                fileDialogs,
+                                                wizards})
         ok = render(directory) && ok;
     return ok ? 0 : 1;
 }

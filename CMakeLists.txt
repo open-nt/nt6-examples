@@ -166,6 +166,24 @@ else()
     message(STATUS "No Nt6::Gpio: ptt is left out")
 endif()
 
+# An SSD1322 OLED and an HD44780 LCD; the source is the Zephyr application zephyr/displays, built here for the
+# desktop to run against Nt's ntdisplayemu bench: `NT_GPIO_EMULATOR=ntdisplayemu ./nt_displays`.
+if(TARGET Nt6::Gpio)
+    get_target_property(_nt_gpio_includes Nt6::Gpio INTERFACE_INCLUDE_DIRECTORIES)
+    set(_nt_have_displays OFF)
+    foreach(_dir IN LISTS _nt_gpio_includes)
+        if(EXISTS "${_dir}/qssd1322display.h" OR EXISTS "${_dir}/QtGpio/qssd1322display.h")
+            set(_nt_have_displays ON)
+        endif()
+    endforeach()
+    if(_nt_have_displays)
+        add_executable(nt_displays zephyr/displays/src/main.cpp)
+        target_link_libraries(nt_displays PRIVATE Nt6::Gpio)
+    else()
+        message(STATUS "The installed Nt GPIO has no QSsd1322Display: nt_displays is left out")
+    endif()
+endif()
+
 # Prints what the gamepads do; see "Using Nt Gamepad" in the documentation.
 if(TARGET Nt6::Gamepad)
     add_executable(gamepadinfo gamepad/gamepadinfo.cpp)

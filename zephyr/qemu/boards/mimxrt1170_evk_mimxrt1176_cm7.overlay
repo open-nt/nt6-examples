@@ -1,0 +1,5 @@
+/* A fixed MAC address, so that the router leases the same IP address to the board after every reset. */
+&enet_mac {
+	/delete-property/ zephyr,random-mac-address;
+	local-mac-address = [02 4e 74 11 70 01];
+};
