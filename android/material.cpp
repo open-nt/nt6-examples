@@ -3,9 +3,9 @@
 // The Material 3 Expressive style of Nt (QMaterialStyle): buttons, a text field, check boxes, radio buttons,
 // switches, sliders, progress bars, tabs, combo boxes, menus, dialogs, a list, a button group, a split button, a
 // floating action button, a floating toolbar, button sizes, text fields, icon buttons, a top app bar, a navigation
-// bar, a snackbar, circular progress, chips, a card, a divider, a date picker, badges and, on a wide screen, a
-// navigation rail, in a scheme made from a seed color, light or dark. With Qt, which has no such style, it builds and
-// runs in the default style.
+// bar, a snackbar, circular progress, chips, a card, a divider, a date picker, badges, a drawer, a bottom sheet and,
+// on a wide screen, a navigation rail, in a scheme made from a seed color, light or dark. With Qt, which has no such
+// style, it builds and runs in the default style.
 #include <QApplication>
 #include <QCalendarWidget>
 #include <QDate>
@@ -105,9 +105,11 @@ int main(int argc, char *argv[]) {
     appBar->setProperty("materialToolBar", QStringLiteral("appBar"));
     appBar->setWindowTitle(QStringLiteral("Material 3"));
 #ifdef HAVE_MATERIAL_SYMBOLS
-    appBar->addAction(QMaterialSymbols::icon(QStringLiteral("menu")), QStringLiteral("Menu"));
+    QAction *menuAction =
+        appBar->addAction(QMaterialSymbols::icon(QStringLiteral("menu")), QStringLiteral("Menu"));
     appBar->addSeparator(); // the title goes here
-    appBar->addAction(QMaterialSymbols::icon(QStringLiteral("search")), QStringLiteral("Search"));
+    QAction *search =
+        appBar->addAction(QMaterialSymbols::icon(QStringLiteral("search")), QStringLiteral("Search"));
     QAction *overflow =
         appBar->addAction(QMaterialSymbols::icon(QStringLiteral("more_vert")), QStringLiteral("More"));
 #endif
@@ -427,7 +429,37 @@ int main(int argc, char *argv[]) {
     for (const char *nut : nuts)
         list->addItem(QString::fromLatin1(nut));
     QScroller::grabGesture(list->viewport(), QScroller::LeftMouseButtonGesture);
-    tabs->addTab(list, QStringLiteral("Lists"));
+    // Over the list, a search bar that filters it, and secondary tabs: all the nuts, or those named "nut".
+    auto *lists = new QWidget;
+    auto *over = new QVBoxLayout(lists);
+    over->setContentsMargins(0, 8, 0, 0);
+    over->setSpacing(4);
+    auto *find = new QLineEdit;
+    find->setProperty("materialTextField", QStringLiteral("search"));
+    find->setPlaceholderText(QStringLiteral("Search the nuts"));
+    find->setClearButtonEnabled(true);
+    auto *beside = new QHBoxLayout;
+    beside->setContentsMargins(16, 0, 16, 0);
+    beside->addWidget(find);
+    over->addLayout(beside);
+    auto *which = new QTabBar;
+    which->setProperty("materialTabBar", QStringLiteral("secondary"));
+    which->setExpanding(true);
+    which->addTab(QStringLiteral("All"));
+    which->addTab(QStringLiteral("Called nut"));
+    over->addWidget(which);
+    over->addWidget(list, 1);
+    const auto filter = [list, find, which] {
+        for (int i = 0; i < list->count(); ++i) {
+            const QString name = list->item(i)->text();
+            list->item(i)->setHidden(
+                !name.contains(find->text(), Qt::CaseInsensitive) ||
+                (which->currentIndex() == 1 && !name.contains(QStringLiteral("nut"), Qt::CaseInsensitive)));
+        }
+    };
+    QObject::connect(find, &QLineEdit::textChanged, list, filter);
+    QObject::connect(which, &QTabBar::currentChanged, list, filter);
+    tabs->addTab(lists, QStringLiteral("Lists"));
 
     // The five sizes of a button; the last is square, with corners that turn round while it is checked.
     auto *sizes = new QWidget;
@@ -475,6 +507,46 @@ int main(int argc, char *argv[]) {
     const char *const destinations[] = {"home", "settings", "edit", "folder", "star"};
     for (int i = 0; i < tabs->count() && i < 5; ++i)
         tabs->setTabIcon(i, QMaterialSymbols::icon(QString::fromLatin1(destinations[i])));
+#endif
+
+#ifdef HAVE_MATERIAL_SYMBOLS
+    // The menu button opens a navigation drawer with the pages, and the search button a bottom sheet.
+    QObject::connect(menuAction, &QAction::triggered, [&window, tabs] {
+        QDialog drawer(&window);
+        drawer.setProperty("materialSheet", QStringLiteral("drawer"));
+        auto *rows = new QVBoxLayout(&drawer);
+        rows->setContentsMargins(0, 16, 0, 16);
+        auto *heading = new QLabel(QStringLiteral("Pages"));
+        heading->setContentsMargins(28, 0, 28, 8);
+        rows->addWidget(heading);
+        auto *list = new QListWidget;
+        list->setProperty("materialList", QStringLiteral("navigationDrawer"));
+        list->setIconSize(QSize(24, 24));
+        for (int i = 0; i < tabs->count(); ++i)
+            list->addItem(new QListWidgetItem(tabs->tabIcon(i), tabs->tabText(i)));
+        list->setCurrentRow(tabs->currentIndex());
+        rows->addWidget(list);
+        QObject::connect(list, &QListWidget::itemClicked, [&drawer, tabs, list](QListWidgetItem *item) {
+            tabs->setCurrentIndex(list->row(item));
+            drawer.accept();
+        });
+        drawer.exec();
+    });
+    QObject::connect(search, &QAction::triggered, [&window] {
+        QDialog sheet(&window);
+        sheet.setProperty("materialSheet", QStringLiteral("bottom"));
+        auto *rows = new QVBoxLayout(&sheet);
+        rows->setContentsMargins(24, 24, 24, 24);
+        rows->setSpacing(16);
+        rows->addWidget(new QLabel(QStringLiteral("A bottom sheet. Tap beside it or press Back to close it.")));
+        auto *what = new QLineEdit;
+        what->setProperty("materialLabel", QStringLiteral("Search for"));
+        rows->addWidget(what);
+        auto *go = button(QStringLiteral("Search"), "filled");
+        rows->addWidget(go);
+        QObject::connect(go, &QPushButton::clicked, &sheet, &QDialog::accept);
+        sheet.exec();
+    });
 #endif
 
     // Badges: a dot on More, a count on Lists, and a dot on the app bar's last button.
