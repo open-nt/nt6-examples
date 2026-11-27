@@ -30,6 +30,8 @@
 #include <QSlider>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTime>
+#include <QTimeEdit>
 #include <QToolBar>
 #include <QToolButton>
 #include <QStyleHints>
@@ -366,6 +368,29 @@ int main(int argc, char *argv[]) {
         if (dialog.exec() == QDialog::Accepted) {
             when->setProperty("date", calendar->selectedDate());
             when->setText(calendar->selectedDate().toString(Qt::ISODate));
+        }
+    });
+    // A QTimeEdit as Material's time input, in a dialog.
+    auto *clock = button(QStringLiteral("Pick a time"), "tonal");
+    column->addWidget(clock);
+    QObject::connect(clock, &QPushButton::clicked, [clock] {
+        QDialog dialog(clock->window());
+        auto *rows = new QVBoxLayout(&dialog);
+        rows->setContentsMargins(24, 24, 24, 16);
+        rows->setSpacing(16);
+        rows->addWidget(new QLabel(QStringLiteral("Enter time")));
+        auto *time = new QTimeEdit(clock->property("time").isValid() ? clock->property("time").toTime()
+                                                                     : QTime::currentTime());
+        time->setDisplayFormat(QStringLiteral("HH:mm"));
+        time->setProperty("materialTimeInput", true);
+        rows->addWidget(time, 0, Qt::AlignHCenter);
+        auto *answers = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+        rows->addWidget(answers);
+        QObject::connect(answers, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        QObject::connect(answers, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        if (dialog.exec() == QDialog::Accepted) {
+            clock->setProperty("time", time->time());
+            clock->setText(time->time().toString(QStringLiteral("HH:mm")));
         }
     });
     // A split button: its action, and a menu of others.
