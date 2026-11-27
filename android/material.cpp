@@ -433,6 +433,7 @@ int main(int argc, char *argv[]) {
     });
     QObject::connect(ask, &QPushButton::clicked, [&window] {
         auto *box = new QMessageBox(&window);
+        box->setWindowTitle(QStringLiteral("Delete note"));
         box->setText(QStringLiteral("Delete the note?"));
         box->setInformativeText(QStringLiteral("It cannot be brought back."));
         box->setStandardButtons(QMessageBox::Cancel | QMessageBox::Ok);
