@@ -79,8 +79,11 @@ public:
         if (event->type() == QEvent::Resize) {
             const QSize size = static_cast<QResizeEvent *>(event)->size();
             const bool rail = size.width() > size.height() && size.height() >= 480;
-            m_tabs->tabBar()->setProperty("materialTabBar", rail ? QStringLiteral("navigationRail")
-                                                                 : QStringLiteral("navigationBar"));
+            // Very wide, the rail is the expanded one, with the labels beside the icons.
+            const bool expanded = rail && size.width() >= 1200;
+            m_tabs->tabBar()->setProperty("materialTabBar", expanded ? QStringLiteral("navigationRailExpanded")
+                                                            : rail   ? QStringLiteral("navigationRail")
+                                                                     : QStringLiteral("navigationBar"));
             m_tabs->setTabPosition(rail ? QTabWidget::West : QTabWidget::South);
         }
         return false;
@@ -361,6 +364,7 @@ int main(int argc, char *argv[]) {
         rows->setContentsMargins(16, 16, 16, 16);
         auto *calendar = new QCalendarWidget;
         calendar->setVerticalHeaderFormat(QCalendarWidget::NoVerticalHeader);
+        calendar->setProperty("materialDatePicker", QStringLiteral("modal")); // with the headline of the chosen date
         calendar->setSelectedDate(when->property("date").isValid() ? when->property("date").toDate()
                                                                    : QDate::currentDate());
         rows->addWidget(calendar);
@@ -411,10 +415,16 @@ int main(int argc, char *argv[]) {
     name->setProperty("materialTextField", QStringLiteral("filled"));
     name->setProperty("materialLabel", QStringLiteral("Name"));
     name->setProperty("materialSupportingText", QStringLiteral("As it is to be shown"));
+    name->setMaxLength(30);
+    name->setProperty("materialCounter", true); // characters typed, out of 30
+#ifdef HAVE_MATERIAL_SYMBOLS
+    name->addAction(QMaterialSymbols::icon(QStringLiteral("person")), QLineEdit::LeadingPosition);
+#endif
     column->addWidget(name);
     auto *weight = new QLineEdit;
     weight->setProperty("materialLabel", QStringLiteral("Weight in grams"));
     weight->setProperty("materialError", QString()); // keeps the room for it
+    weight->setProperty("materialSuffix", QStringLiteral("g"));
     weight->setInputMethodHints(Qt::ImhDigitsOnly);
     column->addWidget(weight);
     // A spin box: an outlined field with a button each way.
@@ -460,8 +470,9 @@ int main(int argc, char *argv[]) {
     const char *const nuts[] = {"Acorn", "Almond",    "Beechnut", "Brazil nut", "Candlenut", "Cashew",
                                 "Chestnut", "Filbert", "Ginkgo",   "Hazelnut",   "Hickory",   "Kola nut",
                                 "Macadamia", "Pecan",  "Pine nut", "Pistachio",  "Walnut"};
+    // Two lines each: a line break in the text puts what follows under the name, in the Material style.
     for (const char *nut : nuts)
-        list->addItem(QString::fromLatin1(nut));
+        list->addItem(QString::fromLatin1(nut) + QStringLiteral("\nA nut, or so it is called"));
     QScroller::grabGesture(list->viewport(), QScroller::LeftMouseButtonGesture);
     // Over the list, a search bar that filters it, and secondary tabs: all the nuts, or those named "nut".
     auto *lists = new QWidget;
@@ -485,7 +496,7 @@ int main(int argc, char *argv[]) {
     over->addWidget(list, 1);
     const auto filter = [list, find, which] {
         for (int i = 0; i < list->count(); ++i) {
-            const QString name = list->item(i)->text();
+            const QString name = list->item(i)->text().section(QLatin1Char('\n'), 0, 0);
             list->item(i)->setHidden(
                 !name.contains(find->text(), Qt::CaseInsensitive) ||
                 (which->currentIndex() == 1 && !name.contains(QStringLiteral("nut"), Qt::CaseInsensitive)));
