@@ -3,8 +3,9 @@
 // The Material 3 Expressive style of Nt (QMaterialStyle): buttons, a text field, check boxes, radio buttons,
 // switches, sliders, progress bars, tabs, combo boxes, menus, dialogs, a list, a button group, a split button, a
 // floating action button, a floating toolbar, button sizes, text fields, icon buttons, a top app bar, a navigation
-// bar, a snackbar, circular progress, chips, a card, a divider and a date picker, in a scheme made from a seed color,
-// light or dark. With Qt, which has no such style, it builds and runs in the default style.
+// bar, a snackbar, circular progress, chips, a card, a divider, a date picker, badges and, on a wide screen, a
+// navigation rail, in a scheme made from a seed color, light or dark. With Qt, which has no such style, it builds and
+// runs in the default style.
 #include <QApplication>
 #include <QCalendarWidget>
 #include <QDate>
@@ -24,6 +25,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QResizeEvent>
 #include <QScroller>
 #include <QSlider>
 #include <QTabBar>
@@ -63,6 +65,26 @@ void apply(const QColor &seed, bool dark) {
 #endif
 }
 
+// On a screen that is wide, and high enough for it, the navigation is a rail at the side; otherwise it is a bar at the
+// bottom.
+class NavigationPlace : public QObject {
+public:
+    explicit NavigationPlace(QTabWidget *tabs) : QObject(tabs), m_tabs(tabs) {}
+    bool eventFilter(QObject *, QEvent *event) override {
+        if (event->type() == QEvent::Resize) {
+            const QSize size = static_cast<QResizeEvent *>(event)->size();
+            const bool rail = size.width() > size.height() && size.height() >= 480;
+            m_tabs->tabBar()->setProperty("materialTabBar", rail ? QStringLiteral("navigationRail")
+                                                                 : QStringLiteral("navigationBar"));
+            m_tabs->setTabPosition(rail ? QTabWidget::West : QTabWidget::South);
+        }
+        return false;
+    }
+
+private:
+    QTabWidget *m_tabs;
+};
+
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -86,7 +108,8 @@ int main(int argc, char *argv[]) {
     appBar->addAction(QMaterialSymbols::icon(QStringLiteral("menu")), QStringLiteral("Menu"));
     appBar->addSeparator(); // the title goes here
     appBar->addAction(QMaterialSymbols::icon(QStringLiteral("search")), QStringLiteral("Search"));
-    appBar->addAction(QMaterialSymbols::icon(QStringLiteral("more_vert")), QStringLiteral("More"));
+    QAction *overflow =
+        appBar->addAction(QMaterialSymbols::icon(QStringLiteral("more_vert")), QStringLiteral("More"));
 #endif
     window.addToolBar(appBar);
     // The pages, and a bottom navigation bar to go between them.
@@ -94,6 +117,7 @@ int main(int argc, char *argv[]) {
     tabs->setTabPosition(QTabWidget::South);
     tabs->tabBar()->setProperty("materialTabBar", QStringLiteral("navigationBar"));
     window.setCentralWidget(tabs);
+    window.installEventFilter(new NavigationPlace(tabs));
     // The status bar as a snackbar, which floats above the navigation bar while it has a message.
     auto *snackbar = new QStatusBar;
     snackbar->setProperty("materialStatusBar", QStringLiteral("snackbar"));
@@ -453,6 +477,12 @@ int main(int argc, char *argv[]) {
         tabs->setTabIcon(i, QMaterialSymbols::icon(QString::fromLatin1(destinations[i])));
 #endif
 
+    // Badges: a dot on More, a count on Lists, and a dot on the app bar's last button.
+    tabs->tabBar()->setProperty("materialBadges", QVariantList{false, true, false, 3});
+#ifdef HAVE_MATERIAL_SYMBOLS
+    if (QWidget *overflowButton = appBar->widgetForAction(overflow))
+        overflowButton->setProperty("materialBadge", true);
+#endif
     window.show();
     return app.exec();
 }
