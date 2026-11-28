@@ -5,12 +5,17 @@
 // floating action button, a floating toolbar, button sizes, text fields, icon buttons, a top app bar, a navigation
 // bar, a snackbar, circular progress, chips, a card, a divider, a date picker, badges, a drawer, a bottom sheet, a
 // group box, a text editor and, on a wide screen, a navigation rail, in a scheme made from a seed color, light or
-// dark. With Qt, which has no such style, it builds and runs in the default style.
+// dark; also a vertical menu, a time picker with its dial, a docked date picker, half and standard sheets, a field of
+// several lines, sliders with an icon or from the middle, the full-screen search view, rows with check boxes, a
+// segmented list and a docked toolbar with a floating action button. With Qt, which has no such style, it builds and
+// runs in the default style.
 #include <QApplication>
 #include <QCalendarWidget>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCompleter>
 #include <QDate>
+#include <QDateEdit>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFrame>
@@ -31,6 +36,7 @@
 #include <QScroller>
 #include <QSlider>
 #include <QSpinBox>
+#include <QStringListModel>
 #include <QStatusBar>
 #include <QStyleHints>
 #include <QTabBar>
@@ -75,7 +81,7 @@ void apply(const QColor &seed, bool dark) {
 // bottom.
 class NavigationPlace : public QObject {
 public:
-    explicit NavigationPlace(QTabWidget *tabs) : QObject(tabs), m_tabs(tabs) {}
+    NavigationPlace(QTabWidget *tabs, QWidget *railMenu) : QObject(tabs), m_tabs(tabs), m_railMenu(railMenu) {}
     bool eventFilter(QObject *, QEvent *event) override {
         if (event->type() == QEvent::Resize) {
             const QSize size = static_cast<QResizeEvent *>(event)->size();
@@ -86,12 +92,18 @@ public:
                                                             : rail   ? QStringLiteral("navigationRail")
                                                                      : QStringLiteral("navigationBar"));
             m_tabs->setTabPosition(rail ? QTabWidget::West : QTabWidget::South);
+            // A rail has a menu button at its top, which opens the modal expanded rail over the pages.
+            if (m_railMenu) {
+                m_tabs->setCornerWidget(rail && !expanded ? m_railMenu : nullptr, Qt::TopLeftCorner);
+                m_railMenu->setVisible(rail && !expanded);
+            }
         }
         return false;
     }
 
 private:
     QTabWidget *m_tabs;
+    QWidget *m_railMenu;
 };
 
 // A page that scrolls, under a finger as well, when the screen is too short for
@@ -127,6 +139,7 @@ int main(int argc, char *argv[]) {
     auto *appBar = new QToolBar;
     appBar->setProperty("materialToolBar", QStringLiteral("appBar"));
     appBar->setWindowTitle(QStringLiteral("Material 3"));
+    appBar->setProperty("materialSubtitle", QStringLiteral("Nt gallery"));
 #ifdef HAVE_MATERIAL_SYMBOLS
     QAction *menuAction =
         appBar->addAction(QMaterialSymbols::icon(QStringLiteral("menu")), QStringLiteral("Menu"));
@@ -142,7 +155,18 @@ int main(int argc, char *argv[]) {
     tabs->setTabPosition(QTabWidget::South);
     tabs->tabBar()->setProperty("materialTabBar", QStringLiteral("navigationBar"));
     window.setCentralWidget(tabs);
-    window.installEventFilter(new NavigationPlace(tabs));
+    QToolButton *railMenu = nullptr;
+#ifdef HAVE_MATERIAL_SYMBOLS
+    railMenu = new QToolButton;
+    railMenu->setProperty("materialIconButton", QStringLiteral("standard"));
+    railMenu->setIcon(QMaterialSymbols::icon(QStringLiteral("menu")));
+    railMenu->setToolTip(QStringLiteral("Open the rail"));
+    railMenu->hide();
+    QObject::connect(railMenu, &QToolButton::clicked, [tabs] {
+        tabs->tabBar()->setProperty("materialTabBar", QStringLiteral("navigationRailModal"));
+    });
+#endif
+    window.installEventFilter(new NavigationPlace(tabs, railMenu));
     // The status bar as a snackbar, which floats above the navigation bar while it has a message.
     auto *snackbar = new QStatusBar;
     snackbar->setProperty("materialStatusBar", QStringLiteral("snackbar"));
@@ -256,6 +280,13 @@ int main(int argc, char *argv[]) {
     contents->addWidget(new QLabel(QStringLiteral("A filled card")));
     contents->addWidget(new QLabel(QStringLiteral("Its layout holds what is in it.")));
     layout->addWidget(card);
+    // A card that can be tapped is a button.
+    auto *tappable = new QPushButton(QStringLiteral("An elevated card that can be tapped"));
+    tappable->setProperty("materialCard", QStringLiteral("elevated"));
+    tappable->setMinimumHeight(72);
+    layout->addWidget(tappable);
+    QObject::connect(tappable, &QPushButton::clicked, snackbar,
+                     [snackbar] { snackbar->showMessage(QStringLiteral("The card was tapped"), 3000); });
     layout->addStretch(1);
     tabs->addTab(scrolled(controls), QStringLiteral("Controls"));
 
@@ -267,6 +298,7 @@ int main(int argc, char *argv[]) {
     page->addWidget(new QLabel(QStringLiteral("Slider")));
     auto *slider = new QSlider(Qt::Horizontal);
     slider->setRange(0, 100);
+    slider->setProperty("materialSliderValue", true); // the value over the handle while it is dragged
     page->addWidget(slider);
     page->addWidget(new QLabel(QStringLiteral("Progress")));
     auto *progress = new QProgressBar;
@@ -290,6 +322,21 @@ int main(int argc, char *argv[]) {
     steps->setTickPosition(QSlider::TicksBelow);
     steps->setValue(2);
     page->addWidget(steps);
+    // A medium slider with an icon inside its track, and a centered one, from -50 to 50.
+    page->addWidget(new QLabel(QStringLiteral("Volume, and a balance from the middle")));
+    auto *volume = new QSlider(Qt::Horizontal);
+    volume->setProperty("materialSliderSize", QStringLiteral("medium"));
+    volume->setValue(70);
+#ifdef HAVE_MATERIAL_SYMBOLS
+    volume->setProperty("materialSliderIcon", QMaterialSymbols::icon(QStringLiteral("volume_up")));
+#endif
+    page->addWidget(volume);
+    auto *balance = new QSlider(Qt::Horizontal);
+    balance->setProperty("materialSlider", QStringLiteral("centered"));
+    balance->setProperty("materialSliderValue", true);
+    balance->setRange(-50, 50);
+    balance->setValue(20);
+    page->addWidget(balance);
     auto *off = new QSlider(Qt::Horizontal);
     off->setValue(60);
     off->setEnabled(false);
@@ -332,6 +379,12 @@ int main(int argc, char *argv[]) {
     ring->setValue(slider->value());
     indicators->addWidget(ring);
     QObject::connect(slider, &QSlider::valueChanged, ring, &QProgressBar::setValue);
+    auto *wavyRing = new QProgressBar;
+    wavyRing->setProperty("materialProgress", QStringLiteral("circularWavy"));
+    wavyRing->setTextVisible(false);
+    wavyRing->setValue(slider->value());
+    indicators->addWidget(wavyRing);
+    QObject::connect(slider, &QSlider::valueChanged, wavyRing, &QProgressBar::setValue);
     indicators->addStretch(1);
     page->addLayout(indicators);
     page->addStretch(1);
@@ -363,11 +416,19 @@ int main(int argc, char *argv[]) {
     column->addWidget(combo);
     auto *menuButton = button(QStringLiteral("Menu"), "outlined");
     auto *menu = new QMenu(menuButton);
-    menu->addAction(QStringLiteral("Share"));
+    // The vertical menu of Material 3 Expressive: a submenu opens in its place. Text after a line break is the
+    // supporting text of a row.
+    menu->setProperty("materialMenu", QStringLiteral("vertical"));
+    menu->addSection(QStringLiteral("This note"));
+    menu->addAction(QStringLiteral("Share\nSend a copy to someone, who gets it as it is now"));
     menu->addAction(QStringLiteral("Rename"));
+    QMenu *moveTo = menu->addMenu(QStringLiteral("Move to"));
+    for (const char *folder : {"Garden", "Kitchen", "Shopping"})
+        moveTo->addAction(QString::fromLatin1(folder));
     menu->addSeparator();
     menu->addAction(QStringLiteral("Delete"));
     menuButton->setMenu(menu);
+    menuButton->setToolTip(QStringLiteral("<b>A rich tooltip</b><br>A title over a few lines of supporting text."));
     column->addWidget(menuButton);
     auto *ask = button(QStringLiteral("Dialog"), "filled");
     column->addWidget(ask);
@@ -393,7 +454,14 @@ int main(int argc, char *argv[]) {
             when->setText(calendar->selectedDate().toString(Qt::ISODate));
         }
     });
-    // A QTimeEdit as Material's time input, in a dialog.
+    // A date edit whose popup is the docked date picker.
+    auto *due = new QDateEdit(QDate::currentDate());
+    due->setCalendarPopup(true);
+    due->setProperty("materialLabel", QStringLiteral("Due date"));
+    if (QCalendarWidget *popup = due->calendarWidget())
+        popup->setProperty("materialDatePicker", QStringLiteral("docked"));
+    column->addWidget(due);
+    // A QTimeEdit as Material's time picker, with its dial, in a dialog.
     auto *clock = button(QStringLiteral("Pick a time"), "tonal");
     column->addWidget(clock);
     QObject::connect(clock, &QPushButton::clicked, [clock] {
@@ -401,11 +469,10 @@ int main(int argc, char *argv[]) {
         auto *rows = new QVBoxLayout(&dialog);
         rows->setContentsMargins(24, 24, 24, 16);
         rows->setSpacing(16);
-        rows->addWidget(new QLabel(QStringLiteral("Enter time")));
         auto *time = new QTimeEdit(clock->property("time").isValid() ? clock->property("time").toTime()
                                                                      : QTime::currentTime());
-        time->setDisplayFormat(QStringLiteral("HH:mm"));
-        time->setProperty("materialTimeInput", true);
+        time->setDisplayFormat(QStringLiteral("h:mm AP"));
+        time->setProperty("materialTimeInput", QStringLiteral("dial"));
         rows->addWidget(time, 0, Qt::AlignHCenter);
         auto *answers = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
         rows->addWidget(answers);
@@ -413,7 +480,7 @@ int main(int argc, char *argv[]) {
         QObject::connect(answers, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
         if (dialog.exec() == QDialog::Accepted) {
             clock->setProperty("time", time->time());
-            clock->setText(time->time().toString(QStringLiteral("HH:mm")));
+            clock->setText(time->time().toString(QStringLiteral("h:mm AP")));
         }
     });
     // A split button: its action, and a menu of others.
@@ -449,6 +516,51 @@ int main(int argc, char *argv[]) {
     howMany->setSuffix(QStringLiteral(" nuts"));
     howMany->setProperty("materialLabel", QStringLiteral("How many"));
     column->addWidget(howMany);
+    // A field of several lines, which grows with its text.
+    auto *notes = new QPlainTextEdit;
+    notes->setProperty("materialTextField", QStringLiteral("outlined"));
+    notes->setProperty("materialLabel", QStringLiteral("Notes"));
+    notes->setProperty("materialSupportingText", QStringLiteral("Grows with what is written"));
+    notes->setProperty("materialCounter", true);
+    notes->setProperty("materialMaxLength", 200);
+    notes->setMaximumHeight(200);
+    column->addWidget(notes);
+    // Sheets: a modal one that opens half way, and a standard one that stays with the page.
+    auto *sheets = new QHBoxLayout;
+    auto *half = button(QStringLiteral("Half sheet"), "tonal");
+    auto *standard = button(QStringLiteral("Standard sheet"), "tonal");
+    sheets->addWidget(half);
+    sheets->addWidget(standard);
+    column->addLayout(sheets);
+    QObject::connect(half, &QPushButton::clicked, [&window] {
+        QDialog sheet(&window);
+        sheet.setProperty("materialSheet", QStringLiteral("bottom"));
+        sheet.setProperty("materialSheetHalf", true);
+        auto *rows = new QVBoxLayout(&sheet);
+        rows->setContentsMargins(16, 0, 16, 16);
+        auto *nuts = new QListWidget;
+        nuts->setProperty("materialList", QStringLiteral("segmented"));
+        for (const char *nut : {"Acorn", "Almond", "Brazil nut", "Cashew", "Chestnut", "Hazelnut", "Macadamia",
+                                "Pecan", "Pistachio", "Walnut"})
+            nuts->addItem(QString::fromLatin1(nut) + QStringLiteral("\nDrag the sheet up to see them all"));
+        nuts->setMinimumHeight(window.height());
+        rows->addWidget(nuts);
+        sheet.exec();
+    });
+    QObject::connect(standard, &QPushButton::clicked, [&window] {
+        auto *sheet = new QDialog(&window);
+        sheet->setAttribute(Qt::WA_DeleteOnClose);
+        sheet->setProperty("materialSheet", QStringLiteral("standardBottom"));
+        sheet->setProperty("materialSheetPeek", 72);
+        auto *rows = new QVBoxLayout(sheet);
+        rows->setContentsMargins(24, 0, 24, 24);
+        rows->setSpacing(16);
+        rows->addWidget(new QLabel(QStringLiteral("A standard sheet: drag it up and down; the page stays usable.")));
+        auto *close = button(QStringLiteral("Close"), "text");
+        rows->addWidget(close, 0, Qt::AlignRight);
+        QObject::connect(close, &QPushButton::clicked, sheet, &QDialog::close);
+        sheet->show();
+    });
     QObject::connect(weight, &QLineEdit::textChanged, [weight](const QString &text) {
         bool number = false;
         text.toDouble(&number);
@@ -465,6 +577,7 @@ int main(int argc, char *argv[]) {
         box->setWindowTitle(QStringLiteral("Delete note"));
         box->setText(QStringLiteral("Delete the note?"));
         box->setInformativeText(QStringLiteral("It cannot be brought back."));
+        box->setIcon(QMessageBox::Warning); // the centered form: the icon over the headline
         box->setStandardButtons(QMessageBox::Cancel | QMessageBox::Ok);
         box->setAttribute(Qt::WA_DeleteOnClose);
         box->open();
@@ -488,8 +601,15 @@ int main(int argc, char *argv[]) {
                                 "Chestnut", "Filbert", "Ginkgo",   "Hazelnut",   "Hickory",   "Kola nut",
                                 "Macadamia", "Pecan",  "Pine nut", "Pistachio",  "Walnut"};
     // Two lines each: a line break in the text puts what follows under the name, in the Material style.
-    for (const char *nut : nuts)
-        list->addItem(QString::fromLatin1(nut) + QStringLiteral("\nA nut, or so it is called"));
+    // Each row can be ticked: the check box is at its end.
+    QStringList names;
+    for (const char *nut : nuts) {
+        names << QString::fromLatin1(nut);
+        auto *row = new QListWidgetItem(QString::fromLatin1(nut) + QStringLiteral("\nA nut, or so it is called"));
+        row->setFlags(row->flags() | Qt::ItemIsUserCheckable);
+        row->setCheckState(Qt::Unchecked);
+        list->addItem(row);
+    }
     QScroller::grabGesture(list->viewport(), QScroller::LeftMouseButtonGesture);
     // Over the list, a search bar that filters it, and secondary tabs: all the nuts, or those named "nut".
     auto *lists = new QWidget;
@@ -500,6 +620,19 @@ int main(int argc, char *argv[]) {
     find->setProperty("materialTextField", QStringLiteral("search"));
     find->setPlaceholderText(QStringLiteral("Search the nuts"));
     find->setClearButtonEnabled(true);
+    // Suggestions: on a phone the bar opens the full-screen search view.
+    auto *completer = new QCompleter(names, find);
+    completer->setCaseSensitivity(Qt::CaseInsensitive);
+    completer->setFilterMode(Qt::MatchContains);
+    find->setCompleter(completer);
+#ifdef HAVE_MATERIAL_SYMBOLS
+    // An avatar at the end of the bar.
+    QAction *account = find->addAction(QMaterialSymbols::icon(QStringLiteral("person"), QColor(0xe8, 0x8b, 0x3a), true),
+                                       QLineEdit::TrailingPosition);
+    account->setProperty("materialAvatar", true);
+    QObject::connect(account, &QAction::triggered, snackbar,
+                     [snackbar] { snackbar->showMessage(QStringLiteral("Your account"), 3000); });
+#endif
     auto *beside = new QHBoxLayout;
     beside->setContentsMargins(16, 0, 16, 0);
     beside->addWidget(find);
@@ -511,6 +644,18 @@ int main(int argc, char *argv[]) {
     which->addTab(QStringLiteral("Called nut"));
     over->addWidget(which);
     over->addWidget(list, 1);
+#ifdef HAVE_MATERIAL_SYMBOLS
+    // A docked toolbar under the list, with a floating action button at its end; what does not fit goes into the
+    // menu of its overflow button.
+    auto *docked = new QToolBar;
+    docked->setProperty("materialToolBar", QStringLiteral("docked"));
+    for (const char *symbol : {"check_circle", "sort", "filter_list", "share", "bookmark", "delete", "download", "content_copy"})
+        docked->addAction(QMaterialSymbols::icon(QString::fromLatin1(symbol)), QString::fromLatin1(symbol));
+    QAction *add = docked->addAction(QMaterialSymbols::icon(QStringLiteral("add")), QStringLiteral("Add"));
+    if (QWidget *addButton = docked->widgetForAction(add))
+        addButton->setProperty("materialButton", QStringLiteral("fab"));
+    over->addWidget(docked);
+#endif
     const auto filter = [list, find, which] {
         for (int i = 0; i < list->count(); ++i) {
             const QString name = list->item(i)->text().section(QLatin1Char('\n'), 0, 0);
